@@ -1,0 +1,452 @@
+---
+description: "Generates database table schema with Drizzle ORM (project)"
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# Schema Generator
+
+Create database table schemas with Drizzle ORM and drizzle-zod derived schemas.
+
+## File Location
+
+Create at: `packages/db/src/schema/{entity}.ts`
+
+## Dependencies
+
+**ALWAYS run create-db-schema FIRST** -- it creates the table and all derived schemas that other skills import.
+
+```mermaid
+flowchart TD
+    A[create-db-schema] --> B[query-collections]
+    A --> C[api-router]
+    A --> D[customize-table]
+```
+
+## Pattern
+
+```typescript
+import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { z } from "zod/v4"; // ALWAYS zod/v4, NEVER "zod"
+
+// 1. TABLE DEFINITION (plural name)
+export const {entity} = pgTable("{entity}", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),        // nullable column
+  status: text("status").default("active"),
+  userId: text("user_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+});
+
+// 2. INSERT SCHEMA -- use CALLBACK overrides for nullable columns
+export const insert{Entity}Schema = createInsertSchema({entity}, {
+  name: (schema) => schema.min(1),
+  description: (schema) => schema.optional(), // nullable -> optional
+});
+
+// 3. SELECT SCHEMA -- override nullable columns here too
+export const select{Entity}Schema = createSelectSchema({entity}, {
+  description: (schema) => schema.optional(),
+});
+
+// 4. UPDATE SCHEMA
+export const update{Entity}Schema = select{Entity}Schema
+  .partial()
+  .required({ id: true });
+
+// 5. FORM SCHEMA (excludes system fields)
+export const {entity}FormSchema = insert{Entity}Schema.omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// 6. EDIT FORM SCHEMA -- for edit mode (all user fields optional)
+// MUST NOT include `id` -- the Dialog adds the id after form submission.
+// Including `id` causes silent form validation failure (no id input rendered -> form never submits).
+export const {entity}EditFormSchema = {entity}FormSchema.partial();
+
+// 7. ROUTER OUTPUT SCHEMA -- for .output() validation on selectAll/selectById
+// Think exhaustively about what the DATABASE RETURNS:
+//   - timestamp columns -> Date objects (NOT strings)
+//   - nullable text columns -> string | null (use .nullable().optional())
+//   - boolean with default -> boolean (not nullable)
+// This schema is SEPARATE from selectSchema because selectSchema is used by the collection
+// (which validates data from queryFn) while routerOutputSchema validates the raw DB result.
+export const {entity}RouterOutputSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // For each nullable text column: z.string().nullable().optional()
+  // For each notNull text column: z.string()
+  userId: z.string().nullable().optional(),
+  createdAt: z.date(),   // timestamp columns return Date objects from DB
+  updatedAt: z.date(),   // NOT z.string() -- that causes "Output validation failed"
+});
+```
+
+## Required Fields
+
+All entities MUST include:
+
+```typescript
+id: text("id").primaryKey(),        // Client-generated UUID
+createdAt: timestamp("created_at").defaultNow().notNull(),
+updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+```
+
+## Column Types Quick Reference
+
+```typescript
+import { pgTable, text, varchar, integer, boolean, timestamp, jsonb, decimal, real, pgEnum } from "drizzle-orm/pg-core";
+
+id: text("id").primaryKey(),                          // ALWAYS text -- client-generated UUID
+name: text("name").notNull(),                         // required string
+description: text("description"),                     // nullable string
+email: varchar("email", { length: 255 }).unique(),    // length-constrained + unique
+age: integer("age"),                                  // nullable integer
+price: decimal("price", { precision: 10, scale: 2 }), // exact decimal
+score: real("score"),                                 // floating point
+active: boolean("active").default(true),              // boolean with default
+metadata: jsonb("metadata").$type<{ key: string }>(), // typed JSON (see ADVANCED.md)
+createdAt: timestamp("created_at").defaultNow().notNull(),
+updatedAt: timestamp("updated_at").defaultNow().notNull().$onUpdate(() => new Date()),
+```
+
+**NEVER use `serial()` or `bigint` for primary keys** -- only `text("id").primaryKey()` supports client-generated IDs for optimistic updates.
+
+## Migration Workflow
+
+Run after creating or modifying ANY schema file:
+
+```bash
+cd packages/db && bun drizzle-kit generate   # generates migration SQL from schema changes
+cd packages/db && bun drizzle-kit migrate    # applies migration to database
+```
+
+**NEVER hand-write, modify, or delete migration files.** The `packages/db/drizzle/` folder is managed entirely by these commands. Never manually create, edit, or delete SQL, snapshot, or journal files -- doing so will cause unexpected migration conflicts.
+
+## Export Schema
+
+After creating the file, export in `packages/db/src/schema/index.ts`:
+
+```typescript
+export * from "./{entity}";
+```
+
+## Type Safety -- Zero Tolerance
+
+- **NEVER use `any` type** in generated code -- use proper types, generics, or `unknown` with type narrowing
+- **NEVER suppress typecheck errors** with `// @ts-ignore`, `// @ts-expect-error`, `// @ts-nocheck`, or `// eslint-disable` -- fix the type error instead
+
+## Reference Files
+
+For advanced patterns beyond the core 7-schema template:
+
+- **RELATIONS.md** -- foreign keys (`.references()`), type-safe `relations()`, many-to-many junction tables
+- **ADVANCED.md** -- enums (`pgEnum`), JSONB with type safety, soft deletes, indexes, schema modifications
+
+## Related Skills
+
+- **api-router** -- imports insert/update schemas from this file
+- **query-collections** -- imports form/select schemas from this file
+- **customize-table** -- creates column definitions
+- **handle-views** -- creates List and Detail routes
+
+---
+
+# Schema Relations Reference
+
+Patterns for foreign keys, type-safe relations, and junction tables.
+
+## Foreign Keys (`.references()`)
+
+```typescript
+import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+
+export const orders = pgTable("orders", {
+  id: text("id").primaryKey(),
+  // FK to parent table -- MUST be text() to match text PK
+  customerId: text("customer_id")
+    .references(() => customers.id)
+    .notNull(),
+  // Nullable FK (optional relationship)
+  assigneeId: text("assignee_id").references(() => users.id),
+  userId: text("user_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+```
+
+**Rules:**
+
+- FK column type MUST be `text()` -- never `integer` (parent PKs are always `text`)
+- Nullable FK (no `.notNull()`) -> add callback override in insert/select schemas: `assigneeId: (schema) => schema.optional()`
+- routerOutputSchema for nullable FK: `assigneeId: z.string().nullable().optional()`
+- routerOutputSchema for notNull FK: `customerId: z.string()`
+
+## Type-safe Relations (`relations()`)
+
+Use `relations()` to enable Drizzle's relational query API (`db.query.orders.findMany({ with: { ... } })`).
+
+```typescript
+import { relations } from "drizzle-orm";
+
+// One-to-many: customer has many orders
+export const customersRelations = relations(customers, ({ many }) => ({
+  orders: many(orders),
+}));
+
+// Many-to-one: order belongs to one customer
+export const ordersRelations = relations(orders, ({ one, many }) => ({
+  customer: one(customers, {
+    fields: [orders.customerId],
+    references: [customers.id],
+  }),
+  lineItems: many(lineItems),
+}));
+
+// One-to-one: user has one profile
+export const usersRelations = relations(users, ({ one }) => ({
+  profile: one(profiles, {
+    fields: [users.id],
+    references: [profiles.userId],
+  }),
+}));
+```
+
+**When to use:** For `db.query.{table}.findMany({ with: { relation: true } })` relational queries. Standard CRUD routers typically use `db.select().from()` with explicit joins instead.
+
+## Many-to-Many Junction Tables
+
+Junction tables connect two entities. They MUST follow the same conventions as regular entities.
+
+```typescript
+export const tagsOnPosts = pgTable("tags_on_posts", {
+  id: text("id").primaryKey(), // text PK, NOT composite PK
+  postId: text("post_id")
+    .references(() => posts.id)
+    .notNull(),
+  tagId: text("tag_id")
+    .references(() => tags.id)
+    .notNull(),
+  userId: text("user_id"), // RLS support
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+```
+
+**Why `text("id").primaryKey()` instead of composite PK?**
+TanStack DB collections require `getKey: (item) => item.id` -- every collection item must have a single string `id` field. Composite PKs break this contract.
+
+Junction tables need their own full set of 7 derived schemas (insert, select, update, form, editForm, routerOutput) just like any other entity.
+
+## Relations in routerOutputSchema
+
+When a router returns joined/nested data:
+
+```typescript
+import { z } from "zod/v4";
+
+export const ordersWithCustomerRouterOutputSchema = z.object({
+  id: z.string(),
+  customerId: z.string(),
+  customer: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+    })
+    .nullable()
+    .optional(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
+});
+```
+
+Nested relations are always `.nullable().optional()` -- the join may not return a match.
+
+---
+
+# Advanced Schema Patterns
+
+Enums, JSONB, soft deletes, indexes, and schema modification workflows.
+
+## Enums (`pgEnum()`)
+
+Define database-level enums for constrained string columns.
+
+```typescript
+import { pgTable, pgEnum, text, timestamp } from "drizzle-orm/pg-core";
+
+// Define at module level, BEFORE the table
+export const orderStatusEnum = pgEnum("order_status", [
+  "pending",
+  "processing",
+  "shipped",
+  "delivered",
+  "cancelled",
+]);
+
+export const orders = pgTable("orders", {
+  id: text("id").primaryKey(),
+  status: orderStatusEnum("status").default("pending").notNull(),
+  userId: text("user_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+```
+
+**Schema overrides:** drizzle-zod infers enum columns as a union type automatically -- no callback override needed for enum columns.
+
+**routerOutputSchema:** `status: z.enum(["pending", "processing", "shipped", "delivered", "cancelled"])`
+
+**Migration note:** Enums are database-level types. Adding/removing values requires `drizzle-kit generate` to produce the correct ALTER TYPE SQL. NEVER edit enum values and assume they auto-migrate.
+
+## JSONB with Type Safety
+
+Use `jsonb().$type<T>()` for structured metadata columns.
+
+```typescript
+// Define shape as a TypeScript interface
+interface OrderMetadata {
+  source: string;
+  referralCode?: string;
+  tags: string[];
+}
+
+export const orders = pgTable("orders", {
+  id: text("id").primaryKey(),
+  metadata: jsonb("metadata").$type<OrderMetadata>(),
+  // ...
+});
+```
+
+**insertSchema override:**
+
+```typescript
+export const insertOrdersSchema = createInsertSchema(orders, {
+  metadata: (schema) => schema.optional(),
+});
+```
+
+**routerOutputSchema -- define the shape explicitly:**
+
+```typescript
+metadata: z.object({
+  source: z.string(),
+  referralCode: z.string().optional(),
+  tags: z.array(z.string()),
+}).nullable().optional(),
+```
+
+**NEVER use `z.any()`, `z.unknown()`, or `z.record(z.unknown())` for JSONB columns.** Always define the exact shape.
+
+## Soft Deletes
+
+Use a nullable timestamp to mark records as deleted without removing them.
+
+```typescript
+export const documents = pgTable("documents", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  deletedAt: timestamp("deleted_at"), // null = not deleted
+  userId: text("user_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+```
+
+**insertSchema override:** `deletedAt: (schema) => schema.optional()`
+
+**routerOutputSchema:** `deletedAt: z.date().nullable().optional()`
+
+**Filter in router (exclude soft-deleted rows):**
+
+```typescript
+import { isNull } from "drizzle-orm";
+return db.select().from(documents).where(isNull(documents.deletedAt));
+```
+
+## Indexes
+
+Add indexes for query performance. Use the third argument to `pgTable()`.
+
+```typescript
+import {
+  pgTable,
+  text,
+  timestamp,
+  index,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
+
+export const orders = pgTable(
+  "orders",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id"),
+    status: text("status"),
+    email: text("email").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    // Single column index
+    index("orders_user_id_idx").on(table.userId),
+    // Composite index (for queries filtering on both columns)
+    index("orders_status_created_idx").on(table.status, table.createdAt),
+    // Unique constraint
+    uniqueIndex("orders_email_idx").on(table.email),
+  ],
+);
+```
+
+**Alternatives for unique constraints:** `.unique()` on the column definition (`email: text("email").unique()`) or `uniqueIndex()` in the third argument -- both produce correct migrations.
+
+**Rules:**
+
+- NEVER write index SQL by hand -- edit schema, run `drizzle-kit generate`, review, migrate
+- Index names should follow the pattern `{table}_{column(s)}_idx`
+
+## Schema Modifications
+
+The ONLY valid workflow for modifying existing schemas:
+
+1. **Edit** the table definition in `packages/db/src/schema/{entity}.ts`
+2. **Generate** migration: `cd packages/db && bun drizzle-kit generate`
+3. **Review** the generated SQL in `src/migrations/` to confirm correctness
+4. **Migrate**: `cd packages/db && bun drizzle-kit migrate`
+
+### Common modifications
+
+**Add a column:** Add it to `pgTable()`, update all 7 derived schemas, generate + migrate.
+
+**Remove a column:** Delete from `pgTable()`, remove from all schemas, generate + migrate.
+
+**Rename a column:** Change the SQL name string (e.g., `text("old_name")` -> `text("new_name")`) while keeping the JS key the same. Drizzle-kit detects this as a rename. Generate + migrate.
+
+**Change column type:** Change the column builder (e.g., `text("col")` -> `integer("col")`). Generate + review the ALTER TABLE carefully, then migrate.
+
+### Prohibitions
+
+- **NEVER** hand-write migration SQL files
+- **NEVER** manually create `.sql`, snapshot, or journal files in `src/migrations/`
+- **NEVER** edit existing migration files after they have been applied
+- **NEVER** use `drizzle-kit push` in production -- always `generate` + `migrate`

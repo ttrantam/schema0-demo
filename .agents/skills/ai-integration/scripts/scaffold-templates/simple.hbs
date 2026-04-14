@@ -1,0 +1,121 @@
+import { useState, useCallback } from "react";
+import type { Route } from "./+types/{{name}}";
+import { client } from "@/utils/orpc";
+import { authContext } from "@/context";
+import { Response } from "@/components/ai-elements/response";
+import {
+  Input,
+  PromptInputTextarea,
+  PromptInputSubmit,
+} from "@/components/ai-elements/prompt-input";
+import { Button } from "@/components/ui/button";
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const auth = authContext.get(context);
+  return {
+    user: auth.user,
+  };
+}
+
+export default function {{PascalCase name}}({ loaderData }: Route.ComponentProps) {
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    setIsLoading(true);
+    setError(null);
+    setOutput("");
+
+    try {
+      const aiResponse = await client.{{camelCase name}}.prompt({
+        prompt: input,
+      });
+
+      setOutput(aiResponse.text);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [input, isLoading]);
+
+  const handleClear = useCallback(() => {
+    setInput("");
+    setOutput("");
+    setError(null);
+  }, []);
+
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-4xl">
+      {/* Header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold">{{PascalCase name}}</h1>
+        <p className="text-muted-foreground">
+          Simple AI prompt-response using {{capitalize provider}}
+        </p>
+      </div>
+
+      {/* Input Form */}
+      <div className="mb-8">
+         <Input onSubmit={handleSubmit}>
+            <PromptInputTextarea
+              value={input}
+              placeholder="Enter your prompt here..."
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e as unknown as React.FormEvent);
+                }
+              }}
+              className="min-h-[100px] resize-y"
+              disabled={isLoading}
+            />
+            <PromptInputSubmit
+              status={isLoading ? "streaming" : "ready"}
+              disabled={!input.trim()}
+              className="absolute bottom-1.5 right-1.5"
+            />
+          </Input>
+          <div className="flex justify-end mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleClear}
+              disabled={isLoading || (!input && !output)}
+            >
+              Clear
+            </Button>
+          </div>
+      </div>
+
+      {/* Error display */}
+      {error && (
+        <div className="mb-4 p-4 bg-destructive/10 text-destructive rounded-md">
+          Error: {error}
+        </div>
+      )}
+
+      {/* Output */}
+      {output && (
+        <div className="border rounded-md p-6 bg-muted/30">
+          <h2 className="text-sm font-semibold mb-4 text-muted-foreground uppercase tracking-wider">Response</h2>
+          <Response>{output}</Response>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!output && !error && !isLoading && (
+        <div className="border border-dashed rounded-md p-12 text-center text-muted-foreground">
+          <p>Enter a prompt above to generate a response</p>
+        </div>
+      )}
+    </div>
+  );
+}

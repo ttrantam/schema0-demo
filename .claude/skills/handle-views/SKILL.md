@@ -1,0 +1,260 @@
+---
+name: handle-views
+description: Generates route components - List Route and Detail Route (project)
+allowed-tools: "Read,Write,Edit,Glob,Grep"
+---
+
+# Handle Views Generator
+
+> **Web only.** This skill generates files into `apps/web/`. Do NOT use if `apps/web/` does not exist.
+
+Create route components for listing and viewing entities.
+
+## Files to Create
+
+| File         | Location                                      |
+| ------------ | --------------------------------------------- |
+| List Route   | `apps/web/src/routes/_auth.{entity}.tsx`      |
+| Detail Route | `apps/web/src/routes/_auth.{entity}_.$id.tsx` |
+
+## Dependencies
+
+```mermaid
+flowchart TD
+    A[create-db-schema] --> B[query-collections]
+    A --> C[api-router]
+    A --> D[customize-table]
+
+    B --> E[handle-views]
+    C --> E
+    D --> E
+```
+
+**Prerequisites:** Run ALL of these skills first:
+
+- **create-db-schema** - Database table schema
+- **query-collections** - Collection, Dialog, Form (with inline Form Schema)
+- **api-router** - API router (with inline Insert/Update schemas)
+- **customize-table** - Columns
+
+## Usage Flow
+
+```
+1. Skill("create-db-schema")   → packages/db/src/schema/{entity}.ts
+   (ALWAYS run first - base dependency)
+
+2. Then run any of these IN PARALLEL:
+   - Skill("query-collections")  → Collection, Dialog, Form
+   - Skill("api-router")       → packages/api/src/routers/{entity}.ts
+   - Skill("customize-table")    → Columns
+
+3. Finally:
+   - Skill("handle-views")     → List Route, Detail Route
+```
+
+## List Route Pattern
+
+Create at: `apps/web/src/routes/_auth.{entity}.tsx`
+
+```typescript
+import type { Route } from "./+types/_auth.{entity}";
+import { useState } from "react";
+import { useLiveQuery } from "@tanstack/react-db";
+import { {entity}Collection } from "@/query-collections/custom/{entity}";
+import { {Entity}Dialog, {entity}Columns } from "@/components/ui/data-table/custom/{entity}";
+import { DataTable } from "@/components/ui/data-table";
+import { useDataTableState } from "@/components/ui/data-table/context";
+import { Button } from "@/components/ui/button";
+import { Plus } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { authContext } from "@/context";
+
+// ⚠️ CRITICAL: Loader MUST be exported — without it, loaderData is undefined
+// and userId will be undefined, causing silent schema validation failures.
+// ⚠️ MUST use authContext.get(context) — NOT context.user (which does NOT exist).
+export async function loader({ context }: Route.LoaderArgs) {
+  const auth = authContext.get(context);
+  return { user: auth.user };
+}
+
+export default function {Entity}Page({ loaderData }: Route.ComponentProps) {
+  const userId = loaderData?.user?.id;
+  const tableState = useDataTableState({ defaultPageSize: 25 });
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing{Entity}, setEditing{Entity}] = useState<any>(undefined);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [{entity}ToDelete, set{Entity}ToDelete] = useState<any>(undefined);
+
+  // ⚠️ CRITICAL: .orderBy() is REQUIRED when using .limit()/.offset()
+  // TanStack DB throws LimitOffsetRequireOrderByError without it.
+  const rawData = useLiveQuery((query) =>
+    query.from({ {entity}: {entity}Collection })
+      .orderBy(({ {entity} }: any) => {entity}.createdAt, "desc")
+      .toArray(),
+  );
+
+  // ⚠️ CRITICAL: handleEdit and handleDeleteClick receive the FULL item object
+  // (from row.original in the column), NOT just an id string.
+  const handleEdit = (item: any) => {
+    setEditing{Entity}(item);
+    setDialogOpen(true);
+  };
+
+  const handleDeleteClick = (item: any) => {
+    set{Entity}ToDelete(item);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if ({entity}ToDelete) {
+      const tx = {entity}Collection.delete([{entity}ToDelete.id]);
+      if (tx?.isPersisted?.promise) await tx.isPersisted.promise;
+      setDeleteDialogOpen(false);
+      set{Entity}ToDelete(undefined);
+    }
+  };
+
+  // ⚠️ CRITICAL: tableMeta passes handlers that receive the full item object.
+  // The column's actions must call onEdit(row.original) and onDelete(row.original).
+  const tableMeta = { onUpdate: handleEdit, onDelete: handleDeleteClick };
+
+  return (
+    <div className="container py-8">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold">{Entity}</h1>
+        <Button onClick={() => { setEditing{Entity}(undefined); setDialogOpen(true); }}>
+          <Plus className="mr-2 h-4 w-4" />
+          Create {Entity}
+        </Button>
+      </div>
+
+      <DataTable
+        columns={{entity}Columns}
+        data={rawData ?? []}
+        tableState={tableState}
+        getRowId={(row) => row.id}
+        meta={tableMeta as any}
+      />
+
+      <{Entity}Dialog
+        mode={editing{Entity} ? "edit" : "create"}
+        {entity}={editing{Entity}}
+        open={dialogOpen}
+        onOpenChange={(open) => { setDialogOpen(open); if (!open) setEditing{Entity}(undefined); }}
+        userId={userId}
+      />
+
+      {/* ⚠️ CRITICAL: Use AlertDialog for delete confirmation — NEVER confirm() */}
+      {/* confirm() returns false in HappyDOM (test env), so delete never fires. */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {Entity}</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+```
+
+## ⚠️ Type Safety — Zero Tolerance
+
+- **NEVER use `any` type** in generated code — use proper types, generics, or `unknown` with type narrowing
+- **NEVER suppress typecheck errors** with `// @ts-ignore`, `// @ts-expect-error`, `// @ts-nocheck`, or `// eslint-disable` — fix the type error instead
+
+## Detail Route Pattern
+
+Create at: `apps/web/src/routes/_auth.{entity}_.$id.tsx`
+
+```typescript
+import type { Route } from "./+types/_auth.{entity}_.$id";
+import { useState } from "react";
+import { useNavigate } from "react-router";
+import { useLiveQuery } from "@tanstack/react-db";
+import { {entity}Collection } from "@/query-collections/custom/{entity}";
+import { {Entity}Dialog } from "@/components/ui/data-table/custom/{entity}";
+import { Button } from "@/components/ui/button";
+import { Edit, Trash2, ArrowLeft } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { authContext } from "@/context";
+
+// ⚠️ CRITICAL: Loader MUST be exported
+// ⚠️ MUST use authContext.get(context) — NOT context.user (which does NOT exist).
+export async function loader({ context }: Route.LoaderArgs) {
+  const auth = authContext.get(context);
+  return { user: auth.user };
+}
+
+export default function {Entity}DetailRoute({ loaderData, params }: Route.ComponentProps) {
+  const { id } = params;
+  const userId = loaderData?.user?.id;
+  const navigate = useNavigate();
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const items = useLiveQuery((query) =>
+    query.from({ {entity}: {entity}Collection }).where("@id", "=", id).toArray(),
+  );
+  const item = items?.[0];
+
+  if (!item) return <div>Not Found</div>;
+
+  const handleDelete = async () => {
+    const tx = {entity}Collection.delete([id]);
+    if (tx?.isPersisted?.promise) await tx.isPersisted.promise;
+    navigate("/{entity}");
+  };
+
+  return (
+    <div className="container py-8">
+      <Button variant="ghost" onClick={() => navigate("/{entity}")} className="mb-4">
+        <ArrowLeft className="mr-2 h-4 w-4" />Back
+      </Button>
+
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold">{Entity} Details</h1>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setEditOpen(true)}>
+            <Edit className="mr-2 h-4 w-4" />Edit
+          </Button>
+          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+            <Trash2 className="mr-2 h-4 w-4" />Delete
+          </Button>
+        </div>
+      </div>
+
+      <pre className="bg-muted p-4 rounded-lg">{JSON.stringify(item, null, 2)}</pre>
+
+      <{Entity}Dialog mode="edit" {entity}={item} open={editOpen} onOpenChange={setEditOpen} userId={userId} />
+
+      {/* ⚠️ CRITICAL: Use AlertDialog — NEVER confirm() (returns false in HappyDOM tests) */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {Entity}</AlertDialogTitle>
+            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+```

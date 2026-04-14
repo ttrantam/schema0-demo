@@ -1,0 +1,61 @@
+import { streamToEventIterator } from '@orpc/ai-sdk'
+import { streamText, generateText, convertToCoreMessages } from 'ai'
+{{#if (eq provider "openai")}}
+import { openai } from '@ai-sdk/openai'
+{{/if}}
+{{#if (eq provider "anthropic")}}
+import { anthropic } from '@ai-sdk/anthropic'
+{{/if}}
+{{#if (eq provider "google")}}
+import { google } from '@ai-sdk/google'
+{{/if}}
+import { protectedProcedure } from '../index'
+import { z } from 'zod/v4'
+import { env } from '@template/auth'
+
+// Provider configuration - user must have added {{toUpperCase provider}}_API_KEY to packages/auth/env.ts
+// To use a different provider, update the import and model below
+const llmClient = {{#if (eq provider "openai")}}openai{{/if}}{{#if (eq provider "anthropic")}}anthropic{{/if}}{{#if (eq provider "google")}}google{{/if}}({
+  apiKey: env.{{toUpperCase provider}}_API_KEY
+})
+
+export const {{camelCase name}}Router = {
+  // Streaming chat endpoint - for use with useChat hook
+  chat: protectedProcedure
+    .input(z.object({
+      chatId: z.string().optional(),
+      messages: z.array(z.object({
+        role: z.enum(['user', 'assistant', 'system']),
+        content: z.string(),
+      })),
+    }))
+    .handler(async ({ input }) => {
+      const streamResult = streamText({
+        model: llmClient('{{model}}'),
+        system: 'You are a helpful assistant.',
+        messages: convertToCoreMessages(input.messages),
+      })
+
+      return streamToEventIterator(streamResult.toDataStream())
+    }(streamResult.toData),
+
+  // Simple prompt endpoint - for one-shot responses without streaming
+  prompt: protectedProcedure
+    .input(z.object({
+      prompt: z.string().describe('The user prompt to process'),
+      system: z.string().optional().describe('Optional system prompt'),
+    }))
+    .handler(async ({ input }) => {
+      const textGenerationResult = await generateText({
+        model: llmClient('{{model}}'),
+        system: input.system || 'You are a helpful assistant.',
+        prompt: input.prompt,
+      })
+
+      return {
+        text: textGenerationResult.text,
+        usage: textGenerationResult.usage,
+        finishReason: textGenerationResult.finishReason,
+      }
+    }),
+}

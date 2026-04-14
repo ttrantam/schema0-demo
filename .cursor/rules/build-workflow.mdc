@@ -1,0 +1,900 @@
+---
+description: "Build visual workflow, pipeline, and flow-based UIs with React Flow (@xyflow/react). Use for ANY request involving visual workflows, AI pipelines, node-based editors, connected steps/nodes, DAG editors, automation flows, or graph-based UIs where items are connected with edges. Triggers on keywords like 'workflow', 'pipeline', 'flow', 'nodes connected', 'visual AI', 'steps feed into', or any description of a process with connected stages/nodes. (project)"
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# React Flow Skill (Progressive Disclosure)
+
+Use this skill for production React Flow work. Keep `SKILL.md` for invariants only. Load reference files only as needed.
+
+## Critical Setup Rules
+
+1. Install and import: use `@xyflow/react` (not `reactflow`).
+2. Use named imports only: `import { ReactFlow, ... } from '@xyflow/react'` (no default `ReactFlow` import).
+3. Import styles from `@xyflow/react/dist/style.css` (or `@xyflow/react/dist/base.css` for custom theming).
+4. Use immutable node/edge updates only. Do not mutate node or edge objects in place.
+
+## Non-Negotiable Rules
+
+1. `ReactFlow` is a named export, not a default export.
+2. Read measured dimensions from `node.measured?.width` / `node.measured?.height`.
+3. `node.width` / `node.height` are for fixed dimensions, not measured dimensions.
+4. Use `parentId` (not `parentNode`).
+5. Use `onReconnect`, `reconnectEdge`, and `edgesReconnectable` (not `onEdgeUpdate`, `updateEdge`, `edgesUpdatable`).
+6. Use `positionAbsoluteX` / `positionAbsoluteY` in custom node props (not `xPos` / `yPos`).
+7. Use `nodeLookup` in internal store selectors (not `nodeInternals`).
+8. Use `screenToFlowPosition` (not `project`) for screen-to-canvas coordinates.
+9. Call `getNodesBounds(nodes, { nodeOrigin })` with an options object.
+10. Model custom nodes as a typed union (`type AppNode = ...`) for TypeScript safety.
+
+## Required Architecture Mandates (Production SaaS)
+
+1. Use a dedicated Zustand store for production state (`nodes`, `edges`, and flow actions). Avoid `useNodesState` / `useEdgesState` except for prototypes.
+2. Wrap the editor with `ReactFlowProvider` whenever hooks are used outside the `<ReactFlow />` subtree.
+3. Define `nodeTypes`, `edgeTypes`, and `defaultEdgeOptions` outside React components to avoid re-render loops.
+4. Memoize all custom node and edge components.
+5. Keep event handlers passed to `<ReactFlow />` stable (`useCallback` or equivalent stable references).
+6. Centralize serialization (`toObject`, restore, viewport restore) in store/actions or dedicated modules.
+
+## Performance Landmines
+
+1. Do not use `useNodes()` / `useEdges()` inside custom nodes; they trigger broad re-renders.
+2. Prefer `useNodesData`, `useHandleConnections`, or `useStore` selectors for targeted subscriptions.
+3. Avoid broad Zustand subscriptions in render; select only needed slices.
+4. For large graphs, batch state updates and keep node/edge registries stable.
+5. Run layout only after nodes are measured when the algorithm depends on dimensions.
+
+## Security and Data Integrity Invariants
+
+1. Treat serialized flow JSON from clients as untrusted input; validate node/edge schemas server-side before persistence.
+2. Do not assume client-provided IDs are safe or unique across tenants; normalize or regenerate IDs in backend workflows.
+3. Enforce authorization on flow read/write endpoints independently of front-end visibility controls.
+
+## Reference Loading Guide
+
+1. Import and setup reference: see "Imports and Setup" section below
+2. Production store/editor shell structure: see "Production Store and Editor Shell" section below
+3. Custom nodes/edges and core workflows: see "Custom Nodes, Edges, and Core Workflows" section below
+4. API props and built-in components: see "Complete API Reference" section below
+5. Hooks: see "Hooks Reference" section below
+6. Types and utilities: see "Types and Utilities" section below
+7. Editor interaction patterns (undo/redo, copy/paste, context menus): see "Enterprise SaaS Patterns" section below
+8. Layout/grouping/validation: see "Layout, Grouping, and Validation" section below
+9. Persistence/theming/testing/collaboration: see "Persistence, Theming, Testing, and Collaboration" section below
+
+---
+
+# React Flow -- Imports and Setup
+
+> Correct import patterns and setup rules for `@xyflow/react`.
+
+## Package & Imports
+
+```bash
+npm install @xyflow/react zustand
+```
+
+```tsx
+// CORRECT imports -- NAMED exports from @xyflow/react
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Background,
+  Controls,
+  MiniMap,
+  Panel,
+  Handle,
+  Position,
+  NodeToolbar,
+  NodeResizer,
+  EdgeLabelRenderer,
+  ViewportPortal,
+  useReactFlow,
+  useNodes,
+  useEdges,
+  useNodesState,
+  useEdgesState,
+  useHandleConnections,
+  useNodesData,
+  useNodeId,
+  useConnection,
+  useStore,
+  useStoreApi,
+  useKeyPress,
+  useOnSelectionChange,
+  useOnViewportChange,
+  useNodesInitialized,
+  useUpdateNodeInternals,
+  useInternalNode,
+  useNodeConnections,
+  useViewport,
+  addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
+  getConnectedEdges,
+  getIncomers,
+  getOutgoers,
+  getNodesBounds,
+  getViewportForBounds,
+  reconnectEdge,
+  getBezierPath,
+  getSmoothStepPath,
+  getStraightPath,
+  getSimpleBezierPath,
+  isNode,
+  isEdge,
+  MarkerType,
+  ConnectionMode,
+  BackgroundVariant,
+  SelectionMode,
+  type Node,
+  type Edge,
+  type Connection,
+  type NodeChange,
+  type EdgeChange,
+  type NodeProps,
+  type EdgeProps,
+  type OnConnect,
+  type OnNodesChange,
+  type OnEdgesChange,
+  type OnInit,
+  type ReactFlowInstance,
+  type ReactFlowJsonObject,
+  type FitViewOptions,
+  type Viewport,
+  type XYPosition,
+  type ConnectionState,
+  type IsValidConnection,
+  type OnBeforeDelete,
+  type OnDelete,
+  type OnReconnect,
+  type OnSelectionChangeFunc,
+  type ColorMode,
+  type InternalNode,
+} from "@xyflow/react";
+
+// CORRECT style import
+import "@xyflow/react/dist/style.css";
+// OR for minimal styles (you handle theming):
+import "@xyflow/react/dist/base.css";
+```
+
+```tsx
+// NEVER use old imports
+import ReactFlow from "reactflow"; // WRONG -- old package
+import "reactflow/dist/style.css"; // WRONG -- old path
+```
+
+### Rules Checklist
+
+Always apply these rules when writing React Flow code:
+
+1. **Package**: `@xyflow/react` (NOT `reactflow`)
+2. **Named export**: `import { ReactFlow }` (NOT default import)
+3. **Measured dimensions**: Use `node.measured?.width` / `node.measured?.height` (NOT `node.width`/`node.height` for reading measured values). `node.width`/`node.height` are for SETTING fixed dimensions.
+4. **Immutable updates**: Always spread nodes/edges -- `{ ...node, hidden: true }` (NOT `node.hidden = true`)
+5. **Parent nodes**: Use `parentId` (NOT `parentNode`)
+6. **Reconnect**: Use `onReconnect`, `reconnectEdge`, `edgesReconnectable` (NOT `onEdgeUpdate`, `updateEdge`, `edgesUpdatable`)
+7. **Custom node props**: Use `positionAbsoluteX`/`positionAbsoluteY` (NOT `xPos`/`yPos`)
+8. **Internal store**: Use `nodeLookup` (NOT `nodeInternals`)
+9. **Position conversion**: Use `screenToFlowPosition` (NOT `project`)
+10. **Bounds**: Use `getNodesBounds(nodes, { nodeOrigin })` (NOT `getNodesBounds(nodes, nodeOrigin)`)
+11. **Node type union**: Define `type AppNode = NodeA | NodeB` for TypeScript
+
+---
+
+# React Flow -- Production Store and Editor Shell Architecture
+
+> Focused on production state management and editor shell structure.
+
+## Mandatory Architecture (Enterprise SaaS)
+
+### Zustand Store Pattern (ALWAYS use this for production)
+
+Do NOT use `useNodesState`/`useEdgesState` in production SaaS apps. They are prototyping hooks. Use a Zustand store:
+
+```tsx
+// store/flow-store.ts
+import { create } from "zustand";
+import {
+  applyNodeChanges,
+  applyEdgeChanges,
+  addEdge,
+  type Node,
+  type Edge,
+  type NodeChange,
+  type EdgeChange,
+  type Connection,
+  type OnConnect,
+  type OnNodesChange,
+  type OnEdgesChange,
+} from "@xyflow/react";
+
+// Define your node types
+type TriggerNodeData = { label: string; event: string };
+type ActionNodeData = {
+  label: string;
+  action: string;
+  config: Record<string, unknown>;
+};
+
+type TriggerNode = Node<TriggerNodeData, "trigger">;
+type ActionNode = Node<ActionNodeData, "action">;
+export type AppNode = TriggerNode | ActionNode;
+export type AppEdge = Edge;
+
+export interface FlowState {
+  nodes: AppNode[];
+  edges: AppEdge[];
+  onNodesChange: OnNodesChange<AppNode>;
+  onEdgesChange: OnEdgesChange;
+  onConnect: OnConnect;
+  setNodes: (nodes: AppNode[]) => void;
+  setEdges: (edges: AppEdge[]) => void;
+  addNode: (node: AppNode) => void;
+  updateNodeData: (nodeId: string, data: Partial<AppNode["data"]>) => void;
+  deleteElements: (nodeIds: string[], edgeIds: string[]) => void;
+}
+
+export const useFlowStore = create<FlowState>((set, get) => ({
+  nodes: [],
+  edges: [],
+  onNodesChange: (changes: NodeChange<AppNode>[]) => {
+    set({ nodes: applyNodeChanges(changes, get().nodes) });
+  },
+  onEdgesChange: (changes: EdgeChange[]) => {
+    set({ edges: applyEdgeChanges(changes, get().edges) });
+  },
+  onConnect: (connection: Connection) => {
+    set({ edges: addEdge(connection, get().edges) });
+  },
+  setNodes: (nodes) => set({ nodes }),
+  setEdges: (edges) => set({ edges }),
+  addNode: (node) => set({ nodes: [...get().nodes, node] }),
+  updateNodeData: (nodeId, data) =>
+    set({
+      nodes: get().nodes.map((node) =>
+        node.id === nodeId
+          ? { ...node, data: { ...node.data, ...data } }
+          : node,
+      ),
+    }),
+  deleteElements: (nodeIds, edgeIds) =>
+    set({
+      nodes: get().nodes.filter((n) => !nodeIds.includes(n.id)),
+      edges: get().edges.filter(
+        (e) =>
+          !edgeIds.includes(e.id) &&
+          !nodeIds.includes(e.source) &&
+          !nodeIds.includes(e.target),
+      ),
+    }),
+}));
+```
+
+### Flow Component Shell
+
+```tsx
+// components/flow/FlowEditor.tsx
+import { useCallback } from "react";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Background,
+  Controls,
+  MiniMap,
+  Panel,
+  BackgroundVariant,
+  ConnectionMode,
+  type ColorMode,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { useFlowStore } from "@/store/flow-store";
+import { nodeTypes } from "./nodes";
+import { edgeTypes } from "./edges";
+
+// Define OUTSIDE component to prevent re-render loops
+const defaultEdgeOptions = {
+  animated: false,
+  type: "smoothstep",
+};
+
+function FlowCanvas() {
+  const { nodes, edges, onNodesChange, onEdgesChange, onConnect } =
+    useFlowStore();
+
+  return (
+    <div className="h-full w-full">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
+        connectionMode={ConnectionMode.Loose}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        colorMode="light"
+        proOptions={{ hideAttribution: true }}
+        deleteKeyCode={["Backspace", "Delete"]}
+        multiSelectionKeyCode="Shift"
+        snapToGrid
+        snapGrid={[16, 16]}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+        <Controls />
+        <MiniMap pannable zoomable />
+      </ReactFlow>
+    </div>
+  );
+}
+
+// ALWAYS wrap in provider for hooks to work outside ReactFlow
+export function FlowEditor() {
+  return (
+    <ReactFlowProvider>
+      <FlowCanvas />
+    </ReactFlowProvider>
+  );
+}
+```
+
+---
+
+# React Flow -- Custom Nodes, Edges, and Core Workflow Examples
+
+> Includes typed custom nodes/edges, interaction patterns, serialization, dark mode, and computing flows.
+
+## Custom Nodes
+
+```tsx
+// components/flow/nodes/ActionNode.tsx
+import { memo } from "react";
+import {
+  Handle,
+  Position,
+  NodeResizer,
+  type NodeProps,
+  type Node,
+} from "@xyflow/react";
+import { Settings } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type ActionNodeData = {
+  label: string;
+  action: string;
+  status?: "idle" | "running" | "success" | "error";
+};
+
+// Define node type for type safety
+export type ActionNodeType = Node<ActionNodeData, "action">;
+
+// Use NodeProps<YourNodeType> for typed props
+function ActionNodeComponent({ data, selected }: NodeProps<ActionNodeType>) {
+  return (
+    <>
+      {/* Free version NodeResizer -- no Pro required */}
+      <NodeResizer
+        minWidth={180}
+        minHeight={60}
+        isVisible={selected}
+        lineClassName="!border-blue-500"
+        handleClassName="!h-2.5 !w-2.5 !bg-blue-500 !border-2 !border-white !rounded-sm"
+      />
+      <div
+        className={cn(
+          "rounded-lg border bg-card px-4 py-3 shadow-sm transition-all",
+          "min-w-[180px]",
+          selected && "ring-2 ring-blue-500",
+          data.status === "running" && "border-yellow-400",
+          data.status === "success" && "border-green-400",
+          data.status === "error" && "border-red-400",
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <Settings className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">{data.label}</span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{data.action}</p>
+      </div>
+
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!h-3 !w-3 !border-2 !border-background !bg-muted-foreground"
+      />
+    </>
+  );
+}
+
+// ALWAYS memo custom nodes for performance
+export const ActionNode = memo(ActionNodeComponent);
+```
+
+### Register Node Types
+
+```tsx
+// components/flow/nodes/index.ts
+import type { NodeTypes } from "@xyflow/react";
+import { ActionNode } from "./ActionNode";
+import { TriggerNode } from "./TriggerNode";
+
+// Define OUTSIDE component -- never inline in JSX
+export const nodeTypes: NodeTypes = {
+  action: ActionNode,
+  trigger: TriggerNode,
+};
+```
+
+## Custom Edges
+
+```tsx
+// components/flow/edges/ButtonEdge.tsx
+import { memo } from "react";
+import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
+  type EdgeProps,
+  type Edge,
+} from "@xyflow/react";
+import { X } from "lucide-react";
+import { useFlowStore } from "@/store/flow-store";
+
+type ButtonEdgeData = { label?: string };
+export type ButtonEdgeType = Edge<ButtonEdgeData, "button">;
+
+function ButtonEdgeComponent({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+  data,
+}: EdgeProps<ButtonEdgeType>) {
+  const deleteElements = useFlowStore((s) => s.deleteElements);
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
+      <EdgeLabelRenderer>
+        <div
+          className="nodrag nopan pointer-events-auto absolute"
+          style={{
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+          }}
+        >
+          {data?.label && (
+            <span className="rounded bg-background px-1.5 py-0.5 text-xs text-muted-foreground shadow-sm border">
+              {data.label}
+            </span>
+          )}
+          <button
+            className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => deleteElements([], [id])}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+export const ButtonEdge = memo(ButtonEdgeComponent);
+```
+
+## Essential Interaction Patterns
+
+### Connection Validation
+
+```tsx
+const isValidConnection: IsValidConnection = useCallback((connection) => {
+  const { source, target, sourceHandle, targetHandle } = connection;
+  // Prevent self-connections
+  if (source === target) return false;
+  // Prevent cycles
+  const nodes = useFlowStore.getState().nodes;
+  const edges = useFlowStore.getState().edges;
+  const target_node = nodes.find((n) => n.id === target);
+  if (!target_node) return false;
+  const hasCycle = (nodeId: string, visited = new Set<string>()): boolean => {
+    if (visited.has(nodeId)) return false;
+    visited.add(nodeId);
+    const outgoers = getOutgoers({ id: nodeId } as Node, nodes, edges);
+    for (const outgoer of outgoers) {
+      if (outgoer.id === source) return true;
+      if (hasCycle(outgoer.id, visited)) return true;
+    }
+    return false;
+  };
+  return !hasCycle(target!);
+}, []);
+```
+
+### Drag and Drop from Sidebar
+
+```tsx
+const onDragOver = useCallback((event: React.DragEvent) => {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+}, []);
+
+const onDrop = useCallback(
+  (event: React.DragEvent) => {
+    event.preventDefault();
+    const type = event.dataTransfer.getData("application/reactflow");
+    if (!type) return;
+
+    // Use screenToFlowPosition (NOT project)
+    const position = screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+
+    const newNode: AppNode = {
+      id: `${type}-${Date.now()}`,
+      type,
+      position,
+      data: { label: `New ${type}` },
+    };
+    addNode(newNode);
+  },
+  [screenToFlowPosition, addNode],
+);
+```
+
+### Save & Restore (Serialization)
+
+```tsx
+// Use toObject() from useReactFlow
+const { toObject, setViewport, setNodes, setEdges } = useReactFlow();
+
+const onSave = useCallback(() => {
+  const flow: ReactFlowJsonObject = toObject();
+  localStorage.setItem("flow", JSON.stringify(flow));
+  // Or POST to your API
+}, [toObject]);
+
+const onRestore = useCallback(() => {
+  const raw = localStorage.getItem("flow");
+  if (!raw) return;
+  const flow: ReactFlowJsonObject = JSON.parse(raw);
+  setNodes(flow.nodes || []);
+  setEdges(flow.edges || []);
+  if (flow.viewport) {
+    setViewport(flow.viewport);
+  }
+}, [setNodes, setEdges, setViewport]);
+```
+
+## Performance Rules (CRITICAL)
+
+1. **Memo all custom nodes and edges** -- `memo(MyNode)` always
+2. **Define `nodeTypes` and `edgeTypes` OUTSIDE the component** -- never inline or inside render
+3. **`useCallback` all event handlers** passed to `<ReactFlow />`
+4. **Never subscribe to `useNodes()` / `useEdges()` in custom nodes** -- causes O(n^2) re-renders. Use `useNodesData` or `useStore` with selectors instead.
+5. **Use Zustand selectors** -- `useStore((s) => s.nodeLookup.get(id))` for targeted reads
+6. **Avoid spreading `useFlowStore()` in render** -- destructure only what you need
+7. **For 500+ nodes**: use `nodesDraggable={false}` as default, enable per-node; consider `onlyRenderVisibleElements` (enabled by default)
+
+## Dark Mode (Built-in)
+
+```tsx
+// Native dark mode via colorMode prop
+<ReactFlow
+  colorMode="dark" // 'light' | 'dark' | 'system'
+  // Adds .dark class to wrapper, uses CSS variables
+/>
+
+// Tailwind integration -- React Flow's .dark class works with Tailwind dark:
+// Ensure your tailwind.config uses class-based dark mode:
+// darkMode: 'class'
+```
+
+## Computing Flows (Data Flow)
+
+Use `useHandleConnections` + `useNodesData` to build reactive node-to-node data pipelines:
+
+```tsx
+function ProcessorNode({ id }: NodeProps) {
+  const { updateNodeData } = useReactFlow();
+
+  // Get all connections to the "input" handle
+  const connections = useHandleConnections({ type: "target", id: "input" });
+
+  // Get data from connected source nodes -- REACTIVE
+  const connectedData = useNodesData(connections.map((c) => c.source));
+
+  useEffect(() => {
+    const sum = connectedData.reduce(
+      (acc, nd) => acc + (nd?.data?.value ?? 0),
+      0,
+    );
+    updateNodeData(id, { result: sum });
+  }, [connectedData, id, updateNodeData]);
+
+  return <div>...</div>;
+}
+```
+
+---
+
+# React Flow -- Complete API Reference
+
+> Package: `@xyflow/react`. FREE version only. All imports are named exports.
+
+## ReactFlow Component Props
+
+```tsx
+import { ReactFlow } from "@xyflow/react";
+```
+
+### Core Props
+
+| Prop                 | Type                 | Default | Description                          |
+| -------------------- | -------------------- | ------- | ------------------------------------ |
+| `nodes`              | `Node[]`             | `[]`    | Array of node objects                |
+| `edges`              | `Edge[]`             | `[]`    | Array of edge objects                |
+| `defaultNodes`       | `Node[]`             | -       | Initial nodes for uncontrolled mode  |
+| `defaultEdges`       | `Edge[]`             | -       | Initial edges for uncontrolled mode  |
+| `onNodesChange`      | `OnNodesChange`      | -       | Called when nodes change             |
+| `onEdgesChange`      | `OnEdgesChange`      | -       | Called when edges change             |
+| `onConnect`          | `OnConnect`          | -       | Called when a new connection is made |
+| `nodeTypes`          | `NodeTypes`          | -       | Custom node component registry       |
+| `edgeTypes`          | `EdgeTypes`          | -       | Custom edge component registry       |
+| `defaultEdgeOptions` | `DefaultEdgeOptions` | -       | Defaults applied to new edges        |
+
+### Components
+
+- **Background**: `<Background variant={BackgroundVariant.Dots} gap={16} size={1} />`
+- **Controls**: `<Controls showZoom showFitView showInteractive />`
+- **MiniMap**: `<MiniMap pannable zoomable />`
+- **Panel**: `<Panel position="top-left">...</Panel>`
+- **Handle**: `<Handle type="source" position={Position.Right} />`
+- **NodeToolbar**: `<NodeToolbar isVisible={selected} position={Position.Top}>...</NodeToolbar>`
+- **NodeResizer**: `<NodeResizer minWidth={100} minHeight={30} isVisible={selected} />`
+- **EdgeLabelRenderer**: Renders edge labels in the DOM (not SVG)
+- **ViewportPortal**: Renders elements in the viewport coordinate system
+
+---
+
+# React Flow -- Hooks Reference
+
+> Package: `@xyflow/react`. FREE version only.
+
+## useReactFlow
+
+The primary hook for programmatic flow control. **Must be inside `<ReactFlowProvider>`**.
+
+Key methods: `getNodes`, `getEdges`, `setNodes`, `setEdges`, `addNodes`, `addEdges`, `updateNode`, `updateNodeData`, `deleteElements`, `fitView`, `zoomIn`, `zoomOut`, `screenToFlowPosition`, `flowToScreenPosition`, `toObject`.
+
+## useHandleConnections
+
+Get connections for a specific handle. Reactive -- updates when connections change.
+
+## useNodesData
+
+Reactively get data from specific nodes by ID. Only re-renders when those nodes' data changes.
+
+## useStore / useStoreApi
+
+Direct access to React Flow's internal Zustand store. Use selectors for performance.
+
+## useKeyPress
+
+```tsx
+const spacePressed = useKeyPress("Space");
+const ctrlS = useKeyPress(["Meta+s", "Control+s"]);
+```
+
+## useNodesInitialized
+
+Returns true when all nodes have been measured. Useful for triggering layout after initial render.
+
+---
+
+# React Flow -- Types and Utilities Reference
+
+> Package: `@xyflow/react`. FREE version only.
+
+## Key Types
+
+- `Node<T, U>`: Node with typed data and type string
+- `Edge<T, U>`: Edge with typed data and type string
+- `Connection`: `{ source, target, sourceHandle, targetHandle }`
+- `NodeProps<T>`: Props for custom node components
+- `EdgeProps<T>`: Props for custom edge components
+- `ReactFlowJsonObject`: `{ nodes, edges, viewport }`
+- `Viewport`: `{ x, y, zoom }`
+- `XYPosition`: `{ x, y }`
+- `IsValidConnection`: `(connection) => boolean`
+
+## Path Generation Utilities
+
+```ts
+getBezierPath({
+  sourceX,
+  sourceY,
+  sourcePosition,
+  targetX,
+  targetY,
+  targetPosition,
+});
+getSmoothStepPath({
+  sourceX,
+  sourceY,
+  sourcePosition,
+  targetX,
+  targetY,
+  targetPosition,
+});
+getStraightPath({ sourceX, sourceY, targetX, targetY });
+```
+
+## State Helpers
+
+```ts
+applyNodeChanges(changes, nodes); // Apply changes to nodes
+applyEdgeChanges(changes, edges); // Apply changes to edges
+addEdge(connection, edges); // Add edge (prevents duplicates)
+reconnectEdge(oldEdge, newConnection, edges);
+```
+
+## Graph Queries
+
+```ts
+getConnectedEdges(nodes, edges);
+getIncomers(node, nodes, edges);
+getOutgoers(node, nodes, edges);
+getNodesBounds(nodes, { nodeOrigin });
+getViewportForBounds(bounds, width, height, minZoom, maxZoom, padding);
+```
+
+---
+
+# React Flow -- Enterprise SaaS Patterns
+
+> Undo/redo, copy/paste, context menus.
+
+## Undo/Redo
+
+Use `zundo` (temporal middleware for Zustand) for production undo/redo:
+
+```tsx
+import { temporal } from "zundo";
+
+export const useFlowStore = create<FlowState>()(
+  temporal(
+    (set, get) => ({
+      // ... store definition
+    }),
+    {
+      partialize: (state) => ({ nodes: state.nodes, edges: state.edges }),
+      limit: 50,
+      handleSet: (handleSet) => {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        return (state) => {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => handleSet(state), 500);
+        };
+      },
+    },
+  ),
+);
+```
+
+Keyboard bindings:
+
+```tsx
+const isUndoPressed = useKeyPress(["Meta+z", "Control+z"]);
+const isRedoPressed = useKeyPress(["Meta+Shift+z", "Control+Shift+z"]);
+```
+
+## Copy/Paste
+
+Maintain a clipboard in the store. On copy, store selected nodes and their internal edges. On paste, create new nodes with unique IDs, offset positions, and remap edge references.
+
+## Context Menus
+
+Use shadcn's ContextMenu or build a custom one. Pass `onPaneContextMenu`, `onNodeContextMenu`, `onEdgeContextMenu` to `<ReactFlow />`.
+
+---
+
+# React Flow -- Layout, Grouping, and Validation Patterns
+
+## Auto Layout
+
+### Dagre (Simple Tree/DAG Layout)
+
+```bash
+npm install @dagrejs/dagre
+```
+
+Use `Dagre.layout()` to compute positions, then update nodes.
+
+### ELK (Advanced Layout)
+
+```bash
+npm install elkjs
+```
+
+Use `elk.layout()` for more advanced layout algorithms.
+
+## Sub-Flows & Grouping
+
+Use `parentId` and `extent: "parent"` for child nodes. Group nodes must appear BEFORE children in the nodes array. Set explicit dimensions on group nodes.
+
+## Connection Validation
+
+Prevent self-connections and cycles using `isValidConnection`. Use `getOutgoers` for DFS cycle detection. Limit connections per handle with `useHandleConnections`.
+
+## Drag and Drop Sidebar
+
+Set `application/reactflow` data on drag start, use `screenToFlowPosition` on drop to place nodes at the correct canvas position.
+
+---
+
+# React Flow -- Persistence, Theming, Testing, and Collaboration
+
+## Keyboard Shortcuts
+
+Use `useKeyPress` for copy/paste/cut/undo/redo/fitView bindings.
+
+## Flow Serialization
+
+Use `toObject()` from `useReactFlow` to serialize. Restore with `setNodes`, `setEdges`, `setViewport`.
+
+## Theming
+
+Override React Flow CSS variables in your globals.css:
+
+```css
+.react-flow {
+  --xy-background-color: theme("colors.background");
+  --xy-edge-stroke: theme("colors.border");
+  --xy-node-background-color: theme("colors.card");
+  /* ... */
+}
+```
+
+## Performance for Large Flows (500+ nodes)
+
+1. Memo everything
+2. Define nodeTypes/edgeTypes outside component
+3. useCallback all handlers
+4. Use useStore selectors, not useNodes/useEdges
+5. Batch updates in single set() calls
+
+## Testing
+
+Mock `ResizeObserver` in tests. Wrap components in `ReactFlowProvider`. Use `data-id` attributes for node selection.
+
+## Multiplayer
+
+Use `onNodesChange`/`onEdgesChange` to broadcast and apply remote changes via WebSocket/CRDT. Consider Yjs or Liveblocks for production.
+
+## SSR
+
+Pre-define `width` and `height` on nodes for server-side rendering support.

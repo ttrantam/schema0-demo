@@ -1,0 +1,1164 @@
+---
+description: "Set up database tables with Row-Level Security policies, configure authenticated connections, and implement secure user-scoped data access patterns (Do not apply this skill unless specifically asked by user) (project)"
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# Row-Level Security (RLS) Setup
+
+## When to Use This Skill
+
+Use this skill when you need to:
+
+- Set up database tables with Row-Level Security policies
+- Configure authenticated database connections
+- Implement user-scoped data access
+- Add new tables with RLS policies
+- Secure database operations with user-based access control
+
+## Quick Start: Generate RLS Router
+
+**ALWAYS start with scaffolding before writing code:**
+
+```bash
+bun run scaffold-scripts/generate.ts rls-service <name>
+```
+
+Example:
+
+```bash
+bun run scaffold-scripts/generate.ts rls-service products
+```
+
+| Output File | Location                             | Template                             | Responsibility                                                                                                                                      |
+| ----------- | ------------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RLS Router  | `packages/api/src/routers/[name].ts` | `scaffold-templates/rls-service.hbs` | Generates ORPC router with `protectedProcedure`, `createRLSTransaction` for authenticated database access, and CRUD operations with RLS enforcement |
+
+**What the template generates:**
+
+- `getAll` - Fetches all items (RLS automatically filters by user)
+- `getById` - Fetches single item by ID (RLS ensures user owns it)
+- `create` - Creates new item with automatic `userId` assignment
+- `update` - Updates item (RLS ensures user owns it)
+- `delete` - Deletes item (RLS ensures user owns it)
+- All procedures use `protectedProcedure` for authentication
+- `createRLSTransaction` for secure database access
+- TODO comments for schema field customization
+
+## Database Schema with RLS
+
+Location: `packages/db/src/schema/<table>.ts`
+
+```typescript
+import { pgTable, text, timestamp, bigint, boolean } from "drizzle-orm/pg-core";
+import { crudPolicy, authUid } from "drizzle-orm/neon";
+import { authenticatedUserRole } from "./index";
+
+// Example table with RLS
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: bigint("id", { mode: "number" })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    completed: boolean("completed").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    crudPolicy({
+      role: authenticatedUserRole,
+      read: authUid(table.userId), // Users can only read their own tasks
+      modify: authUid(table.userId), // Users can only modify their own tasks
+    }),
+  ],
+);
+```
+
+**Key Points:**
+
+- `authenticatedUserRole` is defined and exported in `packages/db/src/schema/index.ts`
+- `authUid()` and `crudPolicy()` are imported from `drizzle-orm/neon`
+- RLS policies are enforced at the database level
+- `userId` column must be set when inserting records
+
+## Post-Generation Steps
+
+### 1. Export schema in `packages/db/src/schema/index.ts`:
+
+```typescript
+export * from "./tasks";
+```
+
+### 2. Register router in `packages/api/src/routers/index.ts`:
+
+```typescript
+import { tasksRouter } from "./tasks";
+
+export const appRouter = {
+  // ... other routers
+  tasks: tasksRouter,
+};
+```
+
+### 3. Complete TODOs in generated router:
+
+- Add your schema fields to the Zod input schemas
+- Replace TODO comments with actual table operations
+
+### 4. Create frontend route:
+
+Use React Query for data fetching with proper optimistic updates (see `route.hbs` template for reference).
+
+## Best Practices
+
+1. **Always use `protectedProcedure`** - RLS requires authenticated requests
+2. **Set `userId` from context** - Never trust user-provided userId
+3. **Use `createRLSTransaction`** - Ensures RLS policies are enforced
+4. **Test with multiple users** - Verify data isolation works correctly
+5. **Handle "not found" gracefully** - RLS may return empty results
+
+## Type Safety -- Zero Tolerance
+
+- **NEVER use `any` type** in generated code -- use proper types, generics, or `unknown` with type narrowing
+- **NEVER suppress typecheck errors** with `// @ts-ignore`, `// @ts-expect-error`, `// @ts-nocheck`, or `// eslint-disable` -- fix the type error instead
+
+For detailed schema patterns, see SCHEMA.md.
+For service examples, see EXAMPLES.md.
+For common mistakes to avoid, see REFERENCE.md.
+
+---
+
+# RLS ORPC Router Examples
+
+## Complete CRUD Router
+
+```typescript
+// packages/api/src/routers/posts.ts
+import { protectedProcedure } from "../index";
+import { createRLSTransaction } from "@template/db";
+import { posts } from "@template/db/schema";
+import { eq } from "drizzle-orm";
+import { z } from "zod/v4";
+
+export const postsRouter = {
+  // Get all posts (RLS filters by user)
+  getAll: protectedProcedure.handler(async ({ context }) => {
+    const RLSTransaction = await createRLSTransaction(context.request);
+    return await RLSTransaction(async (tx) => {
+      return await tx.select().from(posts);
+    });
+  }),
+
+  // Get post by ID
+  getById: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      return await RLSTransaction(async (tx) => {
+        const result = await tx
+          .select()
+          .from(posts)
+          .where(eq(posts.id, input.id));
+        return result[0] || null;
+      });
+    }),
+
+  // Create new post
+  create: protectedProcedure
+    .input(
+      z.object({
+        title: z.string().min(1),
+        content: z.string(),
+      }),
+    )
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      const userId = context.session.user.id;
+
+      return await RLSTransaction(async (tx) => {
+        return await tx
+          .insert(posts)
+          .values({
+            ...input,
+            userId,
+          })
+          .returning();
+      });
+    }),
+
+  // Update post
+  update: protectedProcedure
+    .input(
+      z.object({
+        id: z.string(),
+        title: z.string().optional(),
+        content: z.string().optional(),
+      }),
+    )
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      const { id, ...data } = input;
+
+      return await RLSTransaction(async (tx) => {
+        return await tx
+          .update(posts)
+          .set(data)
+          .where(eq(posts.id, id))
+          .returning();
+      });
+    }),
+
+  // Delete post
+  delete: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+
+      return await RLSTransaction(async (tx) => {
+        return await tx.delete(posts).where(eq(posts.id, input.id)).returning();
+      });
+    }),
+};
+```
+
+## Route with React Query Integration
+
+```typescript
+// apps/web/src/routes/_auth.posts.tsx
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { orpc } from "@/utils/orpc";
+import type { Route } from "./+types/posts";
+import { authContext } from "@/context";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const auth = authContext.get(context);
+  return { user: auth.user };
+}
+
+export default function PostsPage() {
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const queryClient = useQueryClient();
+
+  // Fetch all posts (RLS ensures only user's posts)
+  const { data: posts, isLoading } = useQuery(
+    orpc.posts.getAll.queryOptions()
+  );
+
+  // Create mutation
+  const createPost = useMutation({
+    ...orpc.posts.create.mutationOptions(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
+      setTitle("");
+      setContent("");
+    },
+  });
+
+  // Delete mutation
+  const deletePost = useMutation({
+    ...orpc.posts.delete.mutationOptions(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["posts"] });
+    },
+  });
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !content.trim()) return;
+    await createPost.mutateAsync({ title, content });
+  };
+
+  return (
+    <div className="container mx-auto p-6 space-y-6">
+      <h1 className="text-2xl font-bold">My Posts</h1>
+
+      {/* Create Form */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Create New Post</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Title"
+              required
+            />
+            <Input
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="Content"
+              required
+            />
+            <Button type="submit" disabled={createPost.isPending}>
+              Create Post
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Posts List */}
+      {isLoading ? (
+        <p>Loading posts...</p>
+      ) : (
+        <div className="grid gap-4">
+          {posts?.map((post) => (
+            <Card key={post.id}>
+              <CardHeader>
+                <CardTitle>{post.title}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p>{post.content}</p>
+                <Button
+                  onClick={() => deletePost.mutate({ id: post.id })}
+                  variant="destructive"
+                  size="sm"
+                  className="mt-4"
+                  disabled={deletePost.isPending}
+                >
+                  Delete
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Router with Filtering
+
+```typescript
+// packages/api/src/routers/tasks.ts
+import { protectedProcedure } from "../index";
+import { createRLSTransaction } from "@template/db";
+import { tasks } from "@template/db/schema";
+import { eq, desc } from "drizzle-orm";
+import { z } from "zod/v4";
+
+export const tasksRouter = {
+  // Get tasks by status
+  getByStatus: protectedProcedure
+    .input(z.object({ completed: z.boolean() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      return await RLSTransaction(async (tx) => {
+        return await tx
+          .select()
+          .from(tasks)
+          .where(eq(tasks.completed, input.completed))
+          .orderBy(desc(tasks.createdAt));
+      });
+    }),
+
+  // Toggle task completion
+  toggle: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+
+      return await RLSTransaction(async (tx) => {
+        // First, get the task
+        const [task] = await tx
+          .select()
+          .from(tasks)
+          .where(eq(tasks.id, input.id))
+          .limit(1);
+
+        if (!task) {
+          throw new Error("Task not found");
+        }
+
+        // Toggle completion
+        return await tx
+          .update(tasks)
+          .set({ completed: !task.completed })
+          .where(eq(tasks.id, input.id))
+          .returning();
+      });
+    }),
+};
+```
+
+## Router with Optimistic Updates
+
+```typescript
+// apps/web/src/routes/_auth.tasks.tsx
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { orpc } from "@/utils/orpc";
+
+export default function TasksPage() {
+  const queryClient = useQueryClient();
+
+  const { data: tasks } = useQuery(orpc.tasks.getAll.queryOptions());
+
+  // Optimistic toggle mutation
+  const toggleTask = useMutation({
+    ...orpc.tasks.toggle.mutationOptions(),
+    onMutate: async (variables) => {
+      // Cancel ongoing queries
+      await queryClient.cancelQueries({ queryKey: ["tasks"] });
+
+      // Snapshot previous value
+      const previousTasks = queryClient.getQueryData(["tasks"]);
+
+      // Optimistically update - let TypeScript infer the type
+      queryClient.setQueryData(["tasks"], (old) =>
+        old?.map((task) =>
+          task.id === variables.id
+            ? { ...task, completed: !task.completed }
+            : task
+        )
+      );
+
+      return { previousTasks };
+    },
+    onError: (err, variables, context) => {
+      // Rollback on error
+      queryClient.setQueryData(["tasks"], context?.previousTasks);
+    },
+    onSettled: () => {
+      // Refetch to ensure sync
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+
+  return (
+    <div className="space-y-2">
+      {tasks?.map((task) => (
+        <div key={task.id} className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={task.completed}
+            onChange={() => toggleTask.mutate({ id: task.id })}
+          />
+          <span className={task.completed ? "line-through" : ""}>
+            {task.title}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+## Database Schema with RLS
+
+```typescript
+// packages/db/src/schema/posts.ts
+import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { crudPolicy, authUid } from "drizzle-orm/neon";
+import { authenticatedUserRole } from "./index";
+
+export const posts = pgTable(
+  "posts",
+  {
+    id: text("id").primaryKey(), // Use text IDs with generateId() on client
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    crudPolicy({
+      role: authenticatedUserRole,
+      read: authUid(table.userId),
+      modify: authUid(table.userId),
+    }),
+  ],
+);
+```
+
+## Router Registration
+
+```typescript
+// packages/api/src/routers/index.ts
+import { publicProcedure } from "../index";
+import { postsRouter } from "./posts";
+import { tasksRouter } from "./tasks";
+
+export const appRouter = {
+  healthCheck: publicProcedure.handler(() => "OK"),
+  posts: postsRouter,
+  tasks: tasksRouter,
+};
+
+export type AppRouter = typeof appRouter;
+export type AppRouterClient = typeof appRouter;
+```
+
+## Testing RLS Policies
+
+```typescript
+// tests/routers/tasks.test.ts
+import { describe, it, expect } from "bun:test";
+import { tasksRouter } from "@template/api/routers/tasks";
+
+describe("Task RLS", () => {
+  it("should only return user's own tasks", async () => {
+    // Create task as user1
+    const task1 = await tasksRouter.create.handler({
+      input: { title: "User 1 Task" },
+      context: { request: user1Request, session: user1Session },
+    });
+
+    // Create task as user2
+    const task2 = await tasksRouter.create.handler({
+      input: { title: "User 2 Task" },
+      context: { request: user2Request, session: user2Session },
+    });
+
+    // User 1 should only see their own task
+    const user1Tasks = await tasksRouter.getAll.handler({
+      input: undefined,
+      context: { request: user1Request, session: user1Session },
+    });
+
+    expect(user1Tasks).toHaveLength(1);
+    expect(user1Tasks[0].title).toBe("User 1 Task");
+  });
+
+  it("should not allow user to modify others' tasks", async () => {
+    const task = await tasksRouter.create.handler({
+      input: { title: "User 1 Task" },
+      context: { request: user1Request, session: user1Session },
+    });
+
+    // User 2 should not be able to delete user 1's task (RLS blocks it)
+    const result = await tasksRouter.delete.handler({
+      input: { id: task.id },
+      context: { request: user2Request, session: user2Session },
+    });
+
+    // RLS will return empty result, not throw
+    expect(result).toEqual([]);
+  });
+});
+```
+
+## Generated Router Template
+
+When you run:
+
+```bash
+bun run scaffold-scripts/generate.ts rls-service products
+```
+
+It generates `packages/api/src/routers/products.ts` with the full CRUD router pattern ready to customize.
+
+---
+
+# RLS Schema Patterns
+
+## RLS Imports
+
+```typescript
+// packages/db/src/schema/[table].ts
+import { pgTable, text, timestamp, bigint, boolean } from "drizzle-orm/pg-core";
+import { crudPolicy, authUid } from "drizzle-orm/neon";
+import { authenticatedUserRole } from "./index";
+```
+
+**Key imports:**
+
+- `crudPolicy` - Helper to define RLS policies
+- `authUid` - Helper to check if current user matches userId column
+- `authenticatedUserRole` - Role for authenticated users (defined in `packages/db/src/schema/index.ts`)
+
+## Authenticated User Role
+
+Define once in `packages/db/src/schema/index.ts`:
+
+```typescript
+import { pgRole } from "drizzle-orm/pg-core";
+
+export const authenticatedUserRole = pgRole("authenticated_user").existing();
+```
+
+Import in all RLS schema files:
+
+```typescript
+import { authenticatedUserRole } from "./index";
+```
+
+## Common Policy Patterns
+
+### User-Scoped Data (Most Common)
+
+```typescript
+crudPolicy({
+  role: authenticatedUserRole,
+  read: authUid(table.userId),
+  modify: authUid(table.userId),
+});
+```
+
+User can only read and modify their own data.
+
+### Public Read, User Write
+
+```typescript
+crudPolicy({
+  role: authenticatedUserRole,
+  read: sql`true`,
+  modify: authUid(table.userId),
+});
+```
+
+All authenticated users can read, only owner can modify.
+
+### Admin-Only Access
+
+```typescript
+crudPolicy({
+  role: authenticatedUserRole,
+  read: sql`false`,
+  modify: sql`false`,
+});
+```
+
+No regular users can access (admin only via different role).
+
+## Complete Table Example
+
+```typescript
+// packages/db/src/schema/posts.ts
+import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { crudPolicy, authUid } from "drizzle-orm/neon";
+import { authenticatedUserRole } from "./index";
+
+export const posts = pgTable(
+  "posts",
+  {
+    id: text("id").primaryKey(), // Use text IDs with generateId() on client
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    isPublic: boolean("is_public").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    crudPolicy({
+      role: authenticatedUserRole,
+      read: authUid(table.userId),
+      modify: authUid(table.userId),
+    }),
+  ],
+);
+```
+
+**Important:**
+
+- `userId` column is required for user-scoped RLS
+- Set `userId` manually when inserting records: `{ ...data, userId: context.session.user.id }`
+- RLS policies filter/restrict based on `userId`
+
+## Schema Export
+
+Export all schemas in `packages/db/src/schema/index.ts`:
+
+```typescript
+import { pgRole } from "drizzle-orm/pg-core";
+
+// Export authenticated user role
+export const authenticatedUserRole = pgRole("authenticated_user").existing();
+
+// Export all tables
+export * from "./posts";
+export * from "./comments";
+export * from "./tasks";
+export * from "./todo"; // Example
+```
+
+## Adding Relations
+
+```typescript
+// packages/db/src/schema/posts.ts (add after table definition)
+import { relations } from "drizzle-orm";
+import { users } from "./users";
+import { comments } from "./comments";
+
+export const postsRelations = relations(posts, ({ one, many }) => ({
+  user: one(users, {
+    fields: [posts.userId],
+    references: [users.id],
+  }),
+  comments: many(comments),
+}));
+```
+
+```typescript
+// packages/db/src/schema/comments.ts
+import { relations } from "drizzle-orm";
+import { posts } from "./posts";
+import { users } from "./users";
+
+export const commentsRelations = relations(comments, ({ one }) => ({
+  post: one(posts, {
+    fields: [comments.postId],
+    references: [posts.id],
+  }),
+  user: one(users, {
+    fields: [comments.userId],
+    references: [users.id],
+  }),
+}));
+```
+
+## Migration Workflow
+
+### 1. Define/Update Schema
+
+```bash
+# Edit packages/db/src/schema/[table].ts
+# Add or modify table definition
+```
+
+### 2. Generate Migration
+
+```bash
+bun run db:generate
+```
+
+This creates a migration file in `packages/db/src/migrations/`.
+
+### 3. Review Migration
+
+Check the generated SQL in `packages/db/src/migrations/[timestamp]_[name].sql` to ensure correctness.
+
+### 4. Apply Migration
+
+```bash
+bun run db:migrate
+```
+
+This applies the migration to the database.
+
+## Column Types Reference
+
+```typescript
+import {
+  pgTable,
+  text,
+  varchar,
+  integer,
+  boolean,
+  timestamp,
+  jsonb,
+} from "drizzle-orm/pg-core";
+
+export const example = pgTable("example", {
+  // ID - always use text with generateId() for client-generated IDs
+  id: text("id").primaryKey(),
+
+  // Text
+  name: text("name").notNull(),
+  email: varchar("email", { length: 255 }).unique(),
+
+  // Numbers
+  count: integer("count").default(0),
+  amount: bigint("amount", { mode: "number" }),
+
+  // Boolean
+  isActive: boolean("is_active").default(true).notNull(),
+
+  // JSON
+  metadata: jsonb("metadata").$type<{ key: string }>(),
+
+  // Timestamps
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+
+  // User ID for RLS
+  userId: text("user_id").notNull(),
+});
+```
+
+## Multiple Policies Example
+
+```typescript
+export const posts = pgTable(
+  "posts",
+  {
+    id: text("id").primaryKey(), // Use text IDs with generateId() on client
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    isPublished: boolean("is_published").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    // Policy 1: Users can read their own posts (published or not)
+    crudPolicy({
+      role: authenticatedUserRole,
+      read: authUid(table.userId),
+      modify: authUid(table.userId),
+    }),
+    // Policy 2: Users can also read published posts from others
+    // Note: Drizzle RLS typically uses single policy, this is conceptual
+    // In practice, combine logic: authUid(table.userId) OR (table.isPublished = true)
+  ],
+);
+```
+
+Environment variables are loaded in `packages/auth/src/env.ts` using `@t3-oss/env-core`.
+
+## Troubleshooting
+
+### Problem: RLS policies not applied
+
+```bash
+# Ensure migrations are applied
+bun run db:migrate
+
+# Check database for RLS policies
+# Connect to DB and run:
+# SELECT * FROM pg_policies WHERE tablename = 'your_table';
+```
+
+### Problem: Cannot insert records
+
+```typescript
+// Ensure userId is set when creating
+const userId = context.session.user.id;
+await tx.insert(posts).values({
+  title: "Post",
+  content: "Content",
+  userId, // MUST include userId
+});
+```
+
+### Problem: Empty results from queries
+
+```typescript
+// Ensure using createRLSTransaction
+const RLSTransaction = await createRLSTransaction(context.request);
+const posts = await RLSTransaction(async (tx) => {
+  return await tx.select().from(posts); // RLS filters by user
+});
+```
+
+---
+
+# RLS Reference and Common Mistakes
+
+## Database Access Pattern
+
+**ALL RLS database operations MUST use `createRLSTransaction`:**
+
+```typescript
+import { createRLSTransaction } from "@template/db";
+import { protectedProcedure } from "../index";
+
+export const usersRouter = {
+  getAll: protectedProcedure.handler(async ({ context }) => {
+    const RLSTransaction = await createRLSTransaction(context.request);
+    return await RLSTransaction(async (tx) => {
+      return await tx.select().from(users);
+    });
+  }),
+};
+```
+
+## How It Works
+
+1. `createRLSTransaction(request)` takes the request object from ORPC context
+2. Internally uses `env.YB_API_HOSTNAME`, `env.YB_ORGANIZATION_ID`
+3. Fetches JWT claims from `https://${env.YB_API_HOSTNAME}/api/user_management/claims`
+4. Validates claims against `env.YB_ORGANIZATION_ID` for authorization
+5. Returns a function that wraps queries in a transaction with RLS context
+6. `RLSTransaction(async (tx) => { ... })` sets JWT claims via `set_config('request.jwt.claims', ...)`
+7. Database enforces RLS policies based on authenticated user's claims
+
+## Common Mistakes to Avoid
+
+### NEVER: Direct Database Connections
+
+```typescript
+// WRONG - Bypasses RLS
+import { createDb } from "@template/db";
+
+export const usersRouter = {
+  getAll: publicProcedure.handler(async () => {
+    const db = createDb();
+    return await db.select().from(users); // RLS not enforced!
+  }),
+};
+```
+
+### NEVER: Use Regular `createDb()` for RLS Tables
+
+```typescript
+// WRONG - Use createRLSTransaction for tables with RLS policies
+export const tasksRouter = {
+  getAll: protectedProcedure.handler(async () => {
+    const db = createDb();
+    return await db.select().from(tasks); // Won't filter by user!
+  }),
+};
+```
+
+### NEVER: Database Operations in Route Loaders
+
+```typescript
+// WRONG - All database operations belong in ORPC procedures
+import { createRLSTransaction } from "@template/db";
+
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const RLSTransaction = await createRLSTransaction(request);
+  return await RLSTransaction(async (tx) => {
+    return await tx.select().from(users); // Put in ORPC router!
+  });
+}
+```
+
+### NEVER: Mix RLS and Non-RLS Incorrectly
+
+```typescript
+// WRONG - Table has RLS but not using createRLSTransaction
+export const postsRouter = {
+  getAll: protectedProcedure.handler(async () => {
+    return await db.select().from(posts); // posts has RLS!
+  }),
+};
+
+// CORRECT
+export const postsRouter = {
+  getAll: protectedProcedure.handler(async ({ context }) => {
+    const RLSTransaction = await createRLSTransaction(context.request);
+    return await RLSTransaction(async (tx) => {
+      return await tx.select().from(posts);
+    });
+  }),
+};
+```
+
+### ALWAYS: Use ORPC Procedures
+
+```typescript
+// CORRECT
+export const usersRouter = {
+  getAll: protectedProcedure.handler(async ({ context }) => {
+    const RLSTransaction = await createRLSTransaction(context.request);
+    return await RLSTransaction(async (tx) => {
+      return await tx.select().from(users);
+    });
+  }),
+};
+```
+
+### ALWAYS: Use Regular `db` for Non-RLS Tables
+
+```typescript
+// CORRECT - publicData table has NO RLS policies
+export const publicDataRouter = {
+  getAll: publicProcedure.handler(async () => {
+    return await db.select().from(publicData); // No RLS needed
+  }),
+};
+```
+
+### ALWAYS: Set userId When Creating Records
+
+```typescript
+// CORRECT - Always set userId for RLS tables
+export const tasksRouter = {
+  create: protectedProcedure
+    .input(z.object({ title: z.string() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      const userId = context.session.user.id; // Get from session
+
+      return await RLSTransaction(async (tx) => {
+        return await tx
+          .insert(tasks)
+          .values({
+            ...input,
+            userId, // MUST set userId
+          })
+          .returning();
+      });
+    }),
+};
+```
+
+## Router File Structure
+
+```typescript
+// packages/api/src/routers/[domain].ts
+import { protectedProcedure } from "../index";
+import { createRLSTransaction } from "@template/db";
+import { items } from "@template/db/schema";
+import { eq } from "drizzle-orm";
+import { z } from "zod/v4";
+
+export const itemsRouter = {
+  // GET ALL
+  getAll: protectedProcedure.handler(async ({ context }) => {
+    const RLSTransaction = await createRLSTransaction(context.request);
+    return await RLSTransaction(async (tx) => {
+      return await tx.select().from(items);
+    });
+  }),
+
+  // GET BY ID
+  getById: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      return await RLSTransaction(async (tx) => {
+        const result = await tx
+          .select()
+          .from(items)
+          .where(eq(items.id, input.id));
+        return result[0] || null;
+      });
+    }),
+
+  // CREATE
+  create: protectedProcedure
+    .input(z.object({ name: z.string().min(1) }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      const userId = context.session.user.id;
+
+      return await RLSTransaction(async (tx) => {
+        return await tx
+          .insert(items)
+          .values({
+            ...input,
+            userId,
+          })
+          .returning();
+      });
+    }),
+
+  // UPDATE
+  update: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().min(1),
+      }),
+    )
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+      const { id, ...data } = input;
+
+      return await RLSTransaction(async (tx) => {
+        return await tx
+          .update(items)
+          .set(data)
+          .where(eq(items.id, id))
+          .returning();
+      });
+    }),
+
+  // DELETE
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .handler(async ({ input, context }) => {
+      const RLSTransaction = await createRLSTransaction(context.request);
+
+      return await RLSTransaction(async (tx) => {
+        return await tx.delete(items).where(eq(items.id, input.id)).returning();
+      });
+    }),
+};
+```
+
+## When to Use RLS vs Regular db
+
+### Use `createRLSTransaction` for:
+
+- User-scoped data (posts, tasks, comments)
+- Data that should be filtered by ownership
+- Tables with `crudPolicy` in schema
+- Any table with a `userId` column
+
+### Use regular `db` for:
+
+- Public/shared data (categories, tags, settings)
+- Admin-only tables without user filtering
+- Tables without RLS policies
+- Lookup tables and reference data
+
+## Deployment Checklist
+
+1. Database schema has RLS policies with `crudPolicy()`
+2. Schema exported in `packages/db/src/schema/index.ts`
+3. Migrations generated and applied: `bun run db:generate && bun run db:migrate`
+4. Router created in `packages/api/src/routers/`
+5. Router registered in `packages/api/src/routers/index.ts`
+6. All RLS procedures use `createRLSTransaction`
+7. All creates set `userId` from `context.session.user.id`
+8. Environment variables set:
+   - `DATABASE_URL`
+   - `YB_API_HOSTNAME`
+   - `YB_ORGANIZATION_ID`
+
+## Debugging RLS Issues
+
+### Problem: RLS returns empty results
+
+```typescript
+// Check if RLS policy is correctly defined
+// packages/db/src/schema/tasks.ts
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: bigint("id", { mode: "number" })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
+    userId: text("user_id").notNull(), // Must have userId column
+    // ...
+  },
+  (table) => [
+    crudPolicy({
+      role: authenticatedUserRole,
+      read: authUid(table.userId), // Check this matches column name
+      modify: authUid(table.userId),
+    }),
+  ],
+);
+```
+
+### Problem: Can see other users' data
+
+```typescript
+// Check that createRLSTransaction is used
+// WRONG
+const items = await db.select().from(tasks); // No RLS!
+
+// CORRECT
+const RLSTransaction = await createRLSTransaction(context.request);
+const items = await RLSTransaction(async (tx) => {
+  return await tx.select().from(tasks);
+});
+```
+
+### Problem: Cannot create records
+
+```typescript
+// Check that userId is set when creating
+// WRONG
+await tx.insert(tasks).values({ title: "Task" }); // Missing userId!
+
+// CORRECT
+const userId = context.session.user.id;
+await tx.insert(tasks).values({ title: "Task", userId });
+```

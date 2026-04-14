@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowJs": true,
+    "isolatedModules": false,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["bun-types", "jest"],
+
+    "paths": {
+      "@/*": ["../../apps/native/*"],
+      "@template/api/*": ["../api/src/*"],
+      "@template/api": ["../api/src/index.ts"],
+      "@template/db/*": ["../db/src/*"],
+      "@template/db": ["../db/src/index.ts"],
+      "@template/auth": ["../auth/src/index.ts"],
+    },
+  },
+}

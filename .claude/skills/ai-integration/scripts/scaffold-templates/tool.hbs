@@ -1,0 +1,54 @@
+import { implementTool, AI_SDK_TOOL_META_SYMBOL, type AiSdkToolMeta } from '@orpc/ai-sdk'
+import { oc } from '@orpc/contract'
+import { z } from 'zod/v4'
+
+interface ORPCMeta extends AiSdkToolMeta {}
+
+const base = oc.$meta<ORPCMeta>({})
+
+// TODO: Customize the tool contract below
+// This defines the input/output schema and AI-facing description
+export const {{camelCase name}}Contract = base
+  .meta({
+    [AI_SDK_TOOL_META_SYMBOL]: {
+      title: '{{PascalCase name}}', // AI SDK tool title (shown to AI)
+    },
+  })
+  .route({
+    summary: 'Description of what {{camelCase name}} does', // AI SDK tool description
+  })
+  .input(z.object({
+    // TODO: Define input schema with descriptions for AI understanding
+    // Example:
+    parameter: z.string().describe('Description of this parameter'),
+  }))
+  .output(z.object({
+    // TODO: Define output schema
+    // Example:
+    result: z.string().describe('Description of the result'),
+  }))
+
+// TODO: Implement the tool logic
+export const {{camelCase name}}Tool = implementTool({{camelCase name}}Contract, {
+  execute: async ({ input }) => {
+    // TODO: Implement your tool logic here
+    // The input will be typed based on your input schema above
+
+    return {
+      result: `{{PascalCase name}} executed with: ${JSON.stringify(input)}`,
+    }
+  },
+})
+
+// Export for use in AI router
+// Example usage in router:
+//
+// import { {{camelCase name}}Tool } from '@/tools/{{name}}'
+//
+// const result = streamText({
+//   model: provider('model-name'),
+//   messages: convertToCoreMessages(input.messages),
+//   tools: {
+//     {{camelCase name}}: {{camelCase name}}Tool,
+//   },
+// })

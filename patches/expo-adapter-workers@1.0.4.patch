@@ -1,0 +1,139 @@
+diff --git a/dist/preDeploy.js b/dist/preDeploy.js
+index af4bc101bbd5febef8dd0e4f4c521e9094485939..57e4f37a452d6e1b05842374c8c8d0939566d351 100644
+--- a/dist/preDeploy.js
++++ b/dist/preDeploy.js
+@@ -2,15 +2,32 @@ import fs from "fs/promises";
+ import path from "path";
+ import replaceInFile from "replace-in-file";
+ import findNodeModule from "find-node-modules";
++
+ const __dirname = path.dirname(new URL(import.meta.url).pathname);
++
+ async function regenerate(distDir) {
+-    const routesManifest = await import(`${distDir}/_expo/routes.json`, {
+-        assert: { type: "json" },
+-    });
+-    const relativeDistDir = path.relative(__dirname, distDir);
+-    const apiRoutes = routesManifest.default.apiRoutes
+-        .map((route) => {
+-        return `{
++  const routesManifest = await import(`${distDir}/_expo/routes.json`, {
++    with: { type: "json" },
++  });
++  
++  const relativeDistDir = path.relative(__dirname, distDir);
++  
++  // Helper function to clean up the page path properly
++  const cleanPagePath = (page) => {
++    // Remove leading "./" if present, but preserve everything else
++    if (page.startsWith("./")) {
++      return page.substring(2);
++    }
++    // Remove leading "/" if present
++    if (page.startsWith("/")) {
++      return page.substring(1);
++    }
++    return page;
++  };
++  
++  const apiRoutes = routesManifest.default.apiRoutes
++    .map((route) => {
++      return `{
+       file: "${route.file}",
+       page: "${route.page}",
+       namedRegex: new RegExp("${route.namedRegex}"),
+@@ -18,31 +35,36 @@ async function regenerate(distDir) {
+       module: import("${relativeDistDir}/${route.file}")
+     }`;
+     })
+-        .join(",");
+-    const htmlRoutes = routesManifest.default.htmlRoutes
+-        .map((route) => {
+-        return `{
++    .join(",");
++    
++  const htmlRoutes = routesManifest.default.htmlRoutes
++    .map((route) => {
++      const cleanPath = cleanPagePath(route.page);
++      return `{
+       file: "${route.file}",
+       page: "${route.page}",
+       namedRegex: new RegExp("${route.namedRegex}"),
+       routeKeys: ${JSON.stringify(route.routeKeys)},
+       generated: ${route.generated ?? false},
+-      "module": import("${`${relativeDistDir}/${route.page.slice(2)}.html`}")
++      "module": import("${relativeDistDir}/${cleanPath}.html")
+     }`;
+     })
+-        .join(",");
+-    const notFoundRoutes = routesManifest.default.notFoundRoutes
+-        .map((route) => {
+-        return `{
++    .join(",");
++    
++  const notFoundRoutes = routesManifest.default.notFoundRoutes
++    .map((route) => {
++      const cleanPath = cleanPagePath(route.page);
++      return `{
+       file: "${route.file}",
+       page: "${route.page}",
+       namedRegex: new RegExp("${route.namedRegex}"),
+       routeKeys: ${JSON.stringify(route.routeKeys)},
+-      module: import("${`${relativeDistDir}/${route.page.slice(2)}.html`}")
++      module: import("${relativeDistDir}/${cleanPath}.html")
+     }`;
+     })
+-        .join(",");
+-    const regenerated = `export const routesManifest = {
++    .join(",");
++    
++  const regenerated = `export const routesManifest = {
+   "apiRoutes": [
+     ${apiRoutes}
+   ],
+@@ -53,25 +75,34 @@ async function regenerate(distDir) {
+     ${notFoundRoutes}
+   ]
+ }`;
+-    await fs.writeFile(path.resolve(__dirname, "./generated.js"), regenerated);
++  
++  await fs.writeFile(path.resolve(__dirname, "./generated.js"), regenerated);
+ }
++
+ async function refactorAssetsNodeModule(distPath) {
+-    await replaceInFile({
+-        files: [`${distPath}/**/*`],
+-        from: /\/assets\/node_modules\//g,
+-        to: "/assets/node-modules/",
+-    });
+-    try {
+-        await fs.rename(path.resolve(distPath, "./client/assets/node_modules"), path.resolve(distPath, "./client/assets/node-modules"));
+-    }
+-    catch (e) { }
++  await replaceInFile({
++    files: [`${distPath}/**/*`],
++    from: /\/assets\/node_modules\//g,
++    to: "/assets/node-modules/",
++  });
++  
++  try {
++    await fs.rename(
++      path.resolve(distPath, "./client/assets/node_modules"),
++      path.resolve(distPath, "./client/assets/node-modules")
++    );
++  } catch (e) {
++    // Silently ignore if already renamed or doesn't exist
++  }
+ }
++
+ const nodeModulesPath = findNodeModule({ relative: false })[0];
+ const projectPath = nodeModulesPath.slice(0, -"node_modules".length);
+ const distPath = path.resolve(projectPath, "./dist");
+ const distServerPath = path.resolve(distPath, "./server");
++
+ /**
+- * to fix node_modules is restricted to upload to cloudflare
++ * to fix node_modules is restricted to upload to cloudflare 
+  * https://github.com/cloudflare/workers-sdk/pull/4710#issuecomment-1885243307
+  */
+ await refactorAssetsNodeModule(distPath);

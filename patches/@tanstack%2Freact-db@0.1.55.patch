@@ -1,0 +1,42 @@
+diff --git a/dist/cjs/useLiveQuery.cjs b/dist/cjs/useLiveQuery.cjs
+index 6177970705daa08fc87c494ef1cf1714b6c5f9a9..da6e14463b028e73adf1acabad8a45ee710ea0cc 100644
+--- a/dist/cjs/useLiveQuery.cjs
++++ b/dist/cjs/useLiveQuery.cjs
+@@ -93,9 +93,15 @@ function useLiveQuery(configOrQueryOrCollection, deps = []) {
+       return snapshotRef.current;
+     };
+   }
++
++  const serverSnapshot = {
++    collection: null,
++    version: 0
++  }
+   const snapshot = react.useSyncExternalStore(
+     subscribeRef.current,
+-    getSnapshotRef.current
++    getSnapshotRef.current,
++    ()=>serverSnapshot,
+   );
+   const returnedSnapshotRef = react.useRef(null);
+   const returnedRef = react.useRef(null);
+diff --git a/dist/esm/useLiveQuery.js b/dist/esm/useLiveQuery.js
+index e4e4a2b9d47a9739b04974dcb8f60438d19557c2..2ab5a1220c93f1ee294c287d3642cf51fab382b4 100644
+--- a/dist/esm/useLiveQuery.js
++++ b/dist/esm/useLiveQuery.js
+@@ -91,9 +91,15 @@ function useLiveQuery(configOrQueryOrCollection, deps = []) {
+       return snapshotRef.current;
+     };
+   }
++
++  const serverSnapshot = {
++      collection: null,
++      version: 0
++  }
+   const snapshot = useSyncExternalStore(
+     subscribeRef.current,
+-    getSnapshotRef.current
++    getSnapshotRef.current,
++    () => serverSnapshot
+   );
+   const returnedSnapshotRef = useRef(null);
+   const returnedRef = useRef(null);

@@ -1,0 +1,67 @@
+{
+  "name": "schema0-template",
+  "private": true,
+  "type": "module",
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "hono": "^4.8.2",
+      "alchemy": "^0.77.0",
+      "@orpc/server": "^1.10.0",
+      "@orpc/openapi": "^1.10.0",
+      "@orpc/zod": "^1.10.0",
+      "better-auth": "^1.4.0",
+      "dotenv": "^17.2.2",
+      "react": "19.1.0",
+      "react-dom": "19.1.0",
+      "@orpc/tanstack-query": "^1.10.0",
+      "@orpc/client": "^1.10.0",
+      "@tanstack/react-query": "^5.85.5",
+      "@tanstack/react-db": "0.1.55",
+      "@tanstack/db": "0.5.11",
+      "@better-auth/expo": "^1.4.0",
+      "zod": "3.25.76",
+      "drizzle-orm": "v0.45.1",
+      "drizzle-kit": "v0.30.6",
+      "vite": "^6.3.5"
+    }
+  },
+  "scripts": {
+    "check": "oxlint",
+    "build": "bun run --filter '*' build",
+    "dev": "alchemy dev",
+    "check-types": "bun run --filter '*' check-types",
+    "dev:native": "bun run --filter native dev",
+    "dev:web": "bun run --filter web dev",
+    "dev:server": "bun run --filter server dev",
+    "db:push": "bun run --filter @template/db db:push",
+    "db:studio": "bun run --filter @template/db db:studio",
+    "db:generate": "bun run --filter @template/db db:generate",
+    "db:migrate": "bun run --filter @template/db db:migrate",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.7",
+    "@cloudflare/workers-types": "^4.20250822.0",
+    "@types/node": "^22.13.11",
+    "@workos-inc/node": "^7.77.0",
+    "alchemy": "^0.77.0",
+    "handlebars": "^4.7.8",
+    "oxlint": "^1.12.0",
+    "oxlint-tsgolint": "^0.8.3",
+    "tsgolint": "^0.0.1",
+    "tsup": "^8.5.1"
+  },
+  "packageManager": "bun@1.3.2",
+  "patchedDependencies": {
+    "@tanstack/react-db@0.1.55": "patches/@tanstack%2Freact-db@0.1.55.patch",
+    "expo-adapter-workers@1.0.4": "patches/expo-adapter-workers@1.0.4.patch"
+  },
+  "dependencies": {
+    "@schema0/cli": "^0.0.8"
+  }
+}

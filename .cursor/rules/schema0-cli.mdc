@@ -1,0 +1,460 @@
+---
+description: "Schema0 CLI commands for deployment, version management, and secrets management. Use when the user wants to deploy, manage versions (preview/production), or manage secrets."
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# Schema0 CLI (Non-Interactive)
+
+CLI for managing deployment, versions, and secrets. All commands run in non-interactive mode (no TTY prompts).
+
+**Authentication**: Handled automatically. No login required.
+
+**Unavailable commands**: `login`, `logout`, `init`, `setup`, `version` (interactive dashboard) -- these require a TTY.
+
+## Available Commands
+
+```bash
+schema0 whoami                          # Verify authentication
+schema0 secrets list                    # List secret names
+schema0 secrets set                     # Set secrets (KEY=VALUE or --env-file)
+schema0 secrets delete                  # Delete a secret
+schema0 dev                             # Start mobile dev server (Expo)
+schema0 doctor                          # Check deployment readiness and fix configuration issues
+schema0 deploy                          # Build & deploy (auto-detects platforms)
+schema0 deploy --platform web           # Deploy web only
+schema0 deploy --platform mobile        # Deploy mobile only
+schema0 deploy --platform web,mobile    # Deploy both platforms
+schema0 logs                            # View deployment logs
+schema0 version list                    # List all versions (dev, preview, production)
+schema0 version preview <commitHash>    # Create a preview environment
+schema0 version deploy <commitHash>     # Deploy a preview to production
+schema0 version remove <commitHash>     # Remove a preview environment
+schema0 version confirm-migration <commitHash> --statements "SQL..." # Run migration
+schema0 sync                            # Move local repository to Schema0
+schema0 delete                          # Delete the app and all resources
+```
+
+## Sync
+
+`schema0 sync` transfers your local repository to Schema0's platform. All branches and history are uploaded. Any previous work on Schema0 for this app will be replaced. After syncing, the app is accessible on the Schema0 dashboard.
+
+## Typical Deployment Flow
+
+```bash
+schema0 doctor                    # Always run first -- checks and fixes configuration issues
+schema0 secrets set 'KEY=value'   # Set secrets (if needed)
+schema0 deploy                    # Auto-detects and deploys all installed platforms
+schema0 deploy --platform web     # Deploy only web
+schema0 deploy --platform mobile  # Deploy only mobile
+```
+
+## Version Management Flow
+
+```bash
+schema0 version list                                    # Check current state
+schema0 version preview <commitHash>                    # Create preview from a dev deployment
+# If migration required, output includes schemaDiff -- write SQL based on it:
+schema0 version confirm-migration <commitHash> --statements "ALTER TABLE ...;" "CREATE INDEX ...;"
+schema0 version deploy <commitHash>                     # Promote preview to production
+# If production migration required:
+schema0 version confirm-migration <commitHash> --production --statements "ALTER TABLE ...;"
+schema0 version remove <commitHash>                     # Clean up preview
+```
+
+See command references below.
+
+---
+
+# schema0 deploy
+
+Build and deploy the application.
+
+## Syntax
+
+```bash
+schema0 deploy [options]
+```
+
+## Options
+
+| Option       | Description                                                   |
+| ------------ | ------------------------------------------------------------- |
+| `--skip-db`  | Skip database schema push                                     |
+| `--platform` | Deploy specific platform(s): `web`, `mobile`, or `web,mobile` |
+
+By default, `schema0 deploy` pushes the database schema before building and deploying. Use `--skip-db` to skip the schema push (e.g., when only frontend code changed).
+
+## What It Does
+
+### Web (`--platform web`)
+1. Generates and runs database migrations via `drizzle-kit generate` + `drizzle-kit migrate` (unless `--skip-db`)
+2. Builds the web application
+3. Uploads static assets to Cloudflare
+4. Deploys the web worker script with bindings and secrets
+
+### Mobile (`--platform mobile`)
+1. Generates and runs database migrations (unless `--skip-db`)
+2. Builds shared packages
+3. Exports the Expo app for web with `EXPO_PUBLIC_*` env vars injected
+4. Runs `expo-adapter-workers` to prepare for Cloudflare
+5. Builds the worker (`build-worker.ts`) -- bundles both Expo static handler and API routes into a single worker
+6. Uploads static assets and deploys the worker
+
+## Requirements
+
+- Must be run from the project root
+- Auto-detects platforms by checking for `apps/web/` and `apps/native/`
+
+## Typical Workflow
+
+```bash
+# Always run doctor before deploying to catch configuration issues:
+schema0 doctor
+
+# Set secrets if needed:
+schema0 secrets set 'DB_URL=postgresql://...' 'API_KEY=sk-...'
+
+# Deploy:
+schema0 deploy
+```
+
+**Important:** Always run `schema0 doctor` before `schema0 deploy`. The doctor command checks configuration state (database config, secrets, environment) and automatically fixes issues that would cause deployment to fail.
+
+## Output
+
+```
+schema0 deploy
+Fetching database URL...
+Database URL retrieved.
+Pushing database schema...
+Database schema pushed.
+Building application...
+Build complete.
+Deploying...
+Deployed!
+Deploy URL: https://scriptname.schema0.com
+Done.
+```
+
+## Notes
+
+- **Do NOT run `bun run build` before deploying** -- the deploy command handles all necessary builds internally.
+- **Do NOT run `bun vite build` or `npx expo export` manually** -- `schema0 deploy` handles the app build step itself.
+- Deploy errors from Cloudflare are surfaced in the CLI output
+- Use `--skip-db` when you only changed frontend code and don't need a schema push
+- Use `--platform` to deploy a specific platform instead of auto-detecting all installed platforms
+
+---
+
+# Schema0 Secrets Management
+
+Manage application secrets that are injected at deploy time. Secrets are never committed to git.
+
+## schema0 secrets list
+
+List the names of all configured secrets.
+
+```bash
+schema0 secrets list
+```
+
+- Only secret **names** are shown (values are never displayed)
+- Shows "No secrets found." if none exist
+
+**Output**:
+
+```
+schema0 secrets list
+Fetching secrets...
+Secrets retrieved.
+Found 2 secret(s):
+  OPENAI_API_KEY
+  STRIPE_SECRET_KEY
+Done.
+```
+
+## schema0 secrets set
+
+Set one or more secrets.
+
+```bash
+# Set one secret
+schema0 secrets set 'API_KEY=my-secret-value'
+
+# Set multiple secrets at once
+schema0 secrets set 'API_KEY=abc123' 'DB_PASSWORD=secret'
+
+# Import from a .env file
+schema0 secrets set --env-file .env.production
+```
+
+| Argument/Option         | Description                          |
+| ----------------------- | ------------------------------------ |
+| `[pairs...]`            | One or more `KEY=VALUE` pairs        |
+| `-f, --env-file <path>` | Path to a `.env` file to bulk-import |
+
+**Notes**:
+
+- Single-quote `KEY=VALUE` pairs to prevent shell expansion of special characters (`&`, `?`, etc.)
+- Keys must be non-empty; values may be empty strings
+- Overwrites existing secrets with the same name
+- `.env` file parsing strips comments (`#`), blank lines, and surrounding quotes
+
+## schema0 secrets delete
+
+Delete a secret.
+
+```bash
+schema0 secrets delete <name>
+```
+
+| Argument | Description                  | Required |
+| -------- | ---------------------------- | -------- |
+| `<name>` | Name of the secret to delete | Yes      |
+
+**Output**:
+
+```
+schema0 secrets delete
+Deleting secret "API_KEY"...
+Secret "API_KEY" deleted.
+Deleted secret: API_KEY
+Done.
+```
+
+## Notes
+
+- Secrets are injected at deploy time, not build time
+- Secret values are stored on the Schema0 backend and are never exposed through the CLI
+
+---
+
+# Schema0 Authentication (Sandbox)
+
+Authentication is handled automatically by the environment.
+
+## schema0 whoami
+
+Show the currently authenticated identity.
+
+```bash
+schema0 whoami
+```
+
+**Authentication**: Automatic.
+
+- Fetches identity info from the Schema0 backend (`GET /auth/whoami`)
+- Displays organization info
+
+**Output**:
+
+```
+schema0 whoami
+Fetching user info...
+User info retrieved.
+Org: org_abc123
+Done.
+```
+
+---
+
+# schema0 dev
+
+Start the mobile development server (Expo) with a public tunnel URL.
+
+## Usage
+
+```bash
+schema0 dev
+```
+
+## Behavior
+
+Uses `node-pty` to spawn Expo with `--go` and `--tunnel` flags. The command outputs a QR code and a public tunnel URL.
+
+The agent MUST display the QR code output to the user so they can scan it with Expo Go on their phone.
+
+## Requirements
+
+- Must be run from the project root (expects `apps/native/` to exist)
+- Requires authentication (`schema0 whoami`)
+- The API must be deployed first (`schema0 deploy --platform mobile`) -- dev mode calls the deployed backend
+
+---
+
+# Schema0 Version Management
+
+Manage preview and production deployments.
+
+A **preview** runs your new application code against a database branched from production, letting you test changes with the production schema before going live. If your code introduces schema changes, a migration is required before the preview is fully operational.
+
+## schema0 version list
+
+List all versions (dev deployments, previews, production).
+
+```bash
+schema0 version list
+```
+
+**Output** (JSON when non-interactive):
+
+```json
+{
+  "developments": [
+    {
+      "commitHash": "abc1234",
+      "query": "...",
+      "deployStatus": "success",
+      "createdAt": "..."
+    }
+  ],
+  "previews": [
+    {
+      "commitHash": "abc1234",
+      "url": "https://preview--abc1234.schema0.com",
+      "migrationCompleted": true
+    }
+  ],
+  "production": {
+    "commitHash": "abc1234",
+    "url": "https://production--appid.schema0.com"
+  }
+}
+```
+
+## schema0 version preview \<commitHash\>
+
+Create a preview environment from a dev deployment.
+
+```bash
+schema0 version preview abc1234
+```
+
+| Argument       | Description                              | Required |
+| -------------- | ---------------------------------------- | -------- |
+| `<commitHash>` | Commit hash of the dev deployment to use | Yes      |
+
+- Creates a database branch, copies secrets, and deploys the preview
+- If migration is required, returns a schema diff -- you must then run `confirm-migration` with your SQL statements
+
+**Output** (JSON):
+
+```json
+{
+  "success": true,
+  "requiresMigration": false,
+  "url": "https://preview--abc1234.schema0.com"
+}
+```
+
+Or if migration is required:
+
+```json
+{ "success": true, "requiresMigration": true, "schemaDiff": "..." }
+```
+
+## schema0 version deploy \<commitHash\>
+
+Deploy a preview to production.
+
+```bash
+schema0 version deploy abc1234
+```
+
+| Argument       | Description                          | Required |
+| -------------- | ------------------------------------ | -------- |
+| `<commitHash>` | Commit hash of the preview to deploy | Yes      |
+
+- The preview must exist and have its migration completed (if applicable)
+- If migration is required, returns a schema diff -- run `confirm-migration --production` with your SQL
+
+**Output** (JSON):
+
+```json
+{ "success": true, "url": "https://production--appid.schema0.com" }
+```
+
+Or if migration is required:
+
+```json
+{ "success": true, "requiresMigration": true, "schemaDiff": "..." }
+```
+
+## schema0 version confirm-migration \<commitHash\>
+
+Apply migration statements to a preview or production environment.
+
+```bash
+# Preview migration
+schema0 version confirm-migration abc1234 --statements "ALTER TABLE foo ADD COLUMN bar TEXT;" "CREATE INDEX idx_bar ON foo(bar);"
+
+# Production migration
+schema0 version confirm-migration abc1234 --production --statements "ALTER TABLE foo ADD COLUMN bar TEXT;"
+```
+
+| Argument/Option | Description                          | Required |
+| --------------- | ------------------------------------ | -------- |
+| `<commitHash>`  | Commit hash of the preview           | Yes      |
+| `--statements`  | One or more SQL migration statements | Yes      |
+| `--production`  | Target production instead of preview | No       |
+
+- Each statement should be a complete SQL statement ending with `;`
+- If migration fails, the response includes error details and suggested fix statements
+
+**Output** (JSON):
+
+```json
+{ "success": true }
+```
+
+Or on failure:
+
+```json
+{ "success": false, "error": "...", "fixStatements": ["..."] }
+```
+
+## schema0 version remove \<commitHash\>
+
+Remove a preview environment.
+
+```bash
+schema0 version remove abc1234
+```
+
+| Argument       | Description                          | Required |
+| -------------- | ------------------------------------ | -------- |
+| `<commitHash>` | Commit hash of the preview to remove | Yes      |
+
+- Removes the deployed preview version and database branch
+
+**Output** (JSON):
+
+```json
+{ "success": true }
+```
+
+## Typical Deployment Flow
+
+```bash
+# 1. Check current state
+schema0 version list
+
+# 2. Create preview from a dev deployment
+schema0 version preview abc1234
+
+# 3. If migration required, review the schema diff and apply SQL:
+schema0 version confirm-migration abc1234 --statements "ALTER TABLE ...;"
+
+# 4. Deploy preview to production
+schema0 version deploy abc1234
+
+# 5. If production migration required:
+schema0 version confirm-migration abc1234 --production --statements "ALTER TABLE ...;"
+```
+
+## Notes
+
+- Schema diffs are returned when migrations are needed -- you write the SQL statements
+- Preview must exist before deploying to production
+- Migration must be completed before a preview can be promoted to production

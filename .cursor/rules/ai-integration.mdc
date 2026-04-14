@@ -1,0 +1,306 @@
+---
+description: "Generate AI-powered features using AI SDK with oRPC. Use when building chat apps, AI endpoints, or integrating LLMs."
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# AI Integration with AI SDK + oRPC
+
+Generate AI-powered features using the [AI SDK](https://ai-sdk.dev/) with oRPC. Supports full-stack chat applications with streaming or simple prompt-response endpoints.
+
+## Quick Start
+
+### Generate Full-Stack AI Chat
+
+```bash
+bun run .claude/skills/ai-integration/scripts/generate.ts chat <name>
+```
+
+**Example:**
+
+```bash
+bun run .claude/skills/ai-integration/scripts/generate.ts chat assistant
+```
+
+This generates:
+
+- ORPC router with streaming support (`packages/api/src/routers/assistant.ts`)
+- React route with `useChat` hook (`apps/web/src/routes/_auth.assistant.tsx`)
+
+### Generate Simple Prompt-Response
+
+```bash
+bun run .claude/skills/ai-integration/scripts/generate.ts simple <name>
+```
+
+**Example:**
+
+```bash
+bun run .claude/skills/ai-integration/scripts/generate.ts simple summarize
+```
+
+This generates a simple one-shot AI endpoint without streaming or message history.
+
+### Generate Backend Router Only
+
+```bash
+bun run .claude/skills/ai-integration/scripts/generate.ts router <name>
+```
+
+### Generate Tool Definition
+
+```bash
+bun run .claude/skills/ai-integration/scripts/generate.ts tool <name>
+```
+
+## Prerequisites
+
+Before using AI features, complete backend integration for your chosen AI provider:
+
+1. **Manage API Keys**: Use the `manage-secrets` skill at `../manage-secrets/SKILL.md` to securely add the API key and update `packages/auth/env.ts`.
+2. **Install Dependencies**:
+   ```bash
+   bun add ai @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google @orpc/ai-sdk @orpc/client
+   ```
+3. **Configure Provider**: Follow the [AI Provider Examples](#ai-provider-examples) to configure the provider client in your router.
+
+**Quick reference for adding API keys manually to `packages/auth/env.ts`:**
+
+For OpenAI:
+
+```typescript
+OPENAI_API_KEY: z.string().optional(),
+```
+
+For Anthropic:
+
+```typescript
+ANTHROPIC_API_KEY: z.string().optional(),
+```
+
+For Google Gemini:
+
+```typescript
+GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
+```
+
+**Install dependencies:**
+
+```bash
+bun add ai @ai-sdk/openai @ai-sdk/anthropic @ai-sdk/google @orpc/ai-sdk @orpc/client
+```
+
+## Generated Files
+
+| Template            | Output Location                        | Purpose                               |
+| ------------------- | -------------------------------------- | ------------------------------------- |
+| `ai-router.hbs`     | `packages/api/src/routers/[name].ts`   | ORPC router with AI SDK streaming     |
+| `ai-chat-route.hbs` | `apps/web/src/routes/_auth.[name].tsx` | Full chat UI with streaming           |
+| `ai-simple.hbs`     | `apps/web/src/routes/_auth.[name].tsx` | Simple prompt-response UI             |
+| `ai-tool.hbs`       | `packages/api/src/tools/[name].ts`     | Tool definitions for function calling |
+
+## Post-Generation Steps
+
+1. **Register router** in `packages/api/src/routers/index.ts`:
+
+   ```typescript
+   import { assistantRouter } from "./assistant";
+   export const appRouter = { assistant: assistantRouter, ... };
+   ```
+
+2. **Add route to sidebar** in `apps/web/src/components/app-sidebar.tsx`
+
+3. **Set the API key environment variable** during build/deploy (injected by MCP/deployment process)
+
+4. **Type check your files** with `bunx oxlint --type-check --type-aware --quiet <your-files>` (only your files, not project-wide)
+
+## Usage Examples
+
+### Chat Mode (Streaming with History)
+
+The generated chat route uses `useChat` from `@ai-sdk/react` with streaming support:
+
+```typescript
+import { useChat } from "@ai-sdk/react";
+import { eventIteratorToUnproxiedDataStream } from "@orpc/client";
+
+export function AssistantChat() {
+  const { messages, sendMessage, status } = useChat({
+    transport: {
+      async sendMessages(options) {
+        return eventIteratorToUnproxiedDataStream(
+          await orpc.assistant.chat(
+            {
+              messages: options.messages,
+            },
+            { signal: options.abortSignal },
+          ),
+        );
+      },
+      reconnectToStream(options) {
+        throw new Error("Unsupported");
+      },
+    },
+  });
+
+  // ... UI implementation
+}
+```
+
+### Simple Mode (One-Shot Response)
+
+The generated simple route provides a one-shot prompt-response without streaming:
+
+```typescript
+const response = await orpc.summarize.prompt({
+  prompt: "Summarize this text...",
+});
+```
+
+### Tool Calling
+
+Use the `implementTool` helper to create AI SDK tools from ORPC contracts:
+
+```typescript
+import { implementTool } from "@orpc/ai-sdk";
+import { oc } from "@orpc/contract";
+
+const getWeatherContract = oc
+  .meta({
+    [AI_SDK_TOOL_META_SYMBOL]: {
+      title: "Get Weather",
+    },
+  })
+  .route({
+    summary: "Get the weather in a location",
+  })
+  .input(
+    z.object({
+      location: z.string().describe("The location to get the weather for"),
+    }),
+  )
+  .output(
+    z.object({
+      location: z.string(),
+      temperature: z.number(),
+    }),
+  );
+
+const getWeatherTool = implementTool(getWeatherContract, {
+  execute: async ({ location }) => ({
+    location,
+    temperature: 72,
+  }),
+});
+```
+
+## AI Provider Examples
+
+### OpenAI (Default)
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { env } from "@template/auth";
+
+const result = streamText({
+  model: openai({ apiKey: env.OPENAI_API_KEY })("gpt-4o-mini"),
+  system: "You are a helpful assistant.",
+  messages: await convertToModelMessages(input.messages),
+});
+```
+
+### Anthropic
+
+```typescript
+import { anthropic } from "@ai-sdk/anthropic";
+import { env } from "@template/auth";
+
+const result = streamText({
+  model: anthropic({ apiKey: env.ANTHROPIC_API_KEY })(
+    "claude-3-5-sonnet-20241022",
+  ),
+  system: "You are a helpful assistant.",
+  messages: await convertToModelMessages(input.messages),
+});
+```
+
+### Google Gemini
+
+```typescript
+import { google } from "@ai-sdk/google";
+import { env } from "@template/auth";
+
+const result = streamText({
+  model: google({ apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY })(
+    "gemini-1.5-flash",
+  ),
+  system: "You are a helpful assistant.",
+  messages: await convertToModelMessages(input.messages),
+});
+```
+
+## Variable Naming Conventions
+
+All generated code follows consistent naming patterns for improved readability:
+
+### LLM Client
+
+| Pattern     | Example     | Usage                                           |
+| ----------- | ----------- | ----------------------------------------------- |
+| `llmClient` | `llmClient` | LLM provider client (openai, anthropic, google) |
+
+### AI Operation Results
+
+| Pattern                | Example                | Usage                                               |
+| ---------------------- | ---------------------- | --------------------------------------------------- |
+| `streamResult`         | `streamResult`         | Result from `streamText()` for streaming responses  |
+| `textGenerationResult` | `textGenerationResult` | Result from `generateText()` for one-shot responses |
+
+### Frontend Variables
+
+| Pattern       | Example       | Usage                                                     |
+| ------------- | ------------- | --------------------------------------------------------- |
+| `userMessage` | `userMessage` | User input message (avoids confusion with messages array) |
+| `aiResponse`  | `aiResponse`  | AI response from simple prompt endpoint                   |
+
+### Provider Pattern
+
+LLM providers are initialized as descriptive client variables:
+
+```typescript
+// Provider configuration
+const llmClient = openai({
+  apiKey: env.OPENAI_API_KEY,
+});
+
+// Usage in streaming
+const streamResult = streamText({
+  model: llmClient("gpt-4o-mini"),
+  system: "You are a helpful assistant.",
+  messages: convertToCoreMessages(input.messages),
+});
+
+// Usage in one-shot
+const textGenerationResult = await generateText({
+  model: llmClient("gpt-4o-mini"),
+  system: input.system || "You are a helpful assistant.",
+  prompt: input.prompt,
+});
+
+return {
+  text: textGenerationResult.text,
+  usage: textGenerationResult.usage,
+  finishReason: textGenerationResult.finishReason,
+};
+```
+
+## Type Safety -- Zero Tolerance
+
+- **NEVER use `any` type** in generated code -- use proper types, generics, or `unknown` with type narrowing
+- **NEVER suppress typecheck errors** with `// @ts-ignore`, `// @ts-expect-error`, `// @ts-nocheck`, or `// eslint-disable` -- fix the type error instead
+
+## Reference
+
+- [AI SDK Documentation](https://ai-sdk.dev/docs)
+- [oRPC AI SDK Integration](https://orpc.unqueue.io/docs/integrations/ai-sdk)
+- [React Router v7](https://reactrouter.com/)

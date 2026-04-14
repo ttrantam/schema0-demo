@@ -1,0 +1,169 @@
+import { useState, useCallback } from "react";
+import { useChat } from "@ai-sdk/react";
+import { eventIteratorToUnproxiedDataStream } from "@orpc/client";
+import type { Route } from "./+types/{{name}}";
+import { client } from "@/utils/orpc";
+import { authContext } from "@/context";
+import { MessageSquare, Trash2 } from "lucide-react";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import { Message, MessageContent } from "@/components/ai-elements/message";
+import { Response } from "@/components/ai-elements/response";
+import {
+  Input,
+  PromptInputTextarea,
+  PromptInputSubmit,
+} from "@/components/ai-elements/prompt-input";
+import { Button } from "@/components/ui/button";
+
+export async function loader({ context }: Route.LoaderArgs) {
+  const auth = authContext.get(context);
+  return {
+    user: auth.user,
+  };
+}
+
+export default function {{PascalCase name}}({ loaderData }: Route.ComponentProps) {
+  const [input, setInput] = useState("");
+
+  const { messages, sendMessage, clearHistory, status, stop, error } = useChat({
+    transport: {
+      async sendMessages(options) {
+        return eventIteratorToUnproxiedDataStream(
+          await client.{{camelCase name}}.chat({
+            messages: options.messages.map(m => ({
+              role: m.role as "user" | "assistant" | "system",
+              content: m.content,
+            })),
+          }, { signal: options.abortSignal })
+        );
+      },
+      reconnectToStream() {
+        throw new Error('Reconnect not supported');
+      },
+    },
+  });
+
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || status === 'pending') return;
+
+    const userMessage = input;
+    setInput("");
+
+    await sendMessage({
+      role: "user",
+      content: userMessage,
+    });
+  }, [input, sendMessage, status]);
+
+  const handleClear = useCallback(() => {
+    clearHistory();
+  }, [clearHistory]);
+
+  const handleStop = useCallback(() => {
+    stop();
+  }, [stop]);
+
+  const isLoading = status === 'pending' || status === 'streaming';
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-3 border-b bg-background">
+        <div>
+          <h1 className="text-lg font-semibold">{{PascalCase name}}</h1>
+          <p className="text-xs text-muted-foreground">
+            Powered by {{capitalize provider}}
+          </p>
+        </div>
+        
+        {messages.length > 0 && (
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={handleClear}
+            title="Clear History"
+          >
+            <Trash2 className="h-5 w-5" />
+          </Button>
+        )}
+      </header>
+
+      {/* Main content area */}
+      <main className="flex-1 overflow-hidden">
+        <Conversation className="h-full w-full">
+          <ConversationContent>
+            {messages.length === 0 ? (
+              <ConversationEmptyState
+                description="Start a conversation with the AI assistant."
+                icon={<MessageSquare className="size-12" />}
+                title="AI Assistant"
+              />
+            ) : (
+              messages.map((message, index) => (
+                <Message from={message.role as "user" | "assistant"} key={message.id || index}>
+                  <MessageContent>
+                    <Response>{message.content}</Response>
+                  </MessageContent>
+                </Message>
+              ))
+            )}
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
+      </main>
+
+      {/* Error display */}
+      {error && (
+        <div className="mx-4 mb-2 p-3 bg-destructive/10 text-destructive rounded-md text-sm">
+          Error: {error.message}
+        </div>
+      )}
+
+      {/* Input area */}
+      <footer className="p-4 border-t bg-background">
+        {isLoading && (
+          <div className="flex justify-center mb-2">
+            <Button
+              type="button"
+              onClick={handleStop}
+              variant="outline"
+              size="sm"
+            >
+              Stop generating
+            </Button>
+          </div>
+        )}
+        <div className="max-w-3xl mx-auto">
+          <Input onSubmit={handleSubmit}>
+            <PromptInputTextarea
+              value={input}
+              placeholder="Type your message..."
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e as unknown as React.FormEvent);
+                }
+              }}
+              className="min-h-[60px] max-h-[200px] resize-none pr-12"
+            />
+            <PromptInputSubmit
+              status={isLoading ? "streaming" : "ready"}
+              disabled={!input.trim()}
+              className="absolute bottom-1.5 right-1.5"
+            />
+          </Input>
+        </div>
+        <p className="text-xs text-center text-muted-foreground mt-2">
+          Press Enter to send, Shift + Enter for new line
+        </p>
+      </footer>
+    </div>
+  );
+}
