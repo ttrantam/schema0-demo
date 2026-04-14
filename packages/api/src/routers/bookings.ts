@@ -46,6 +46,9 @@ export const bookingsRouter = {
       const res = await fetchCustomResources(path, {
         method: "GET",
       });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch bookings: ${res.status}`);
+      }
       return await res.json();
     }),
 
@@ -55,8 +58,9 @@ export const bookingsRouter = {
     .handler(async ({ input }) => {
       const res = await fetchCustomResources(`bookings/${input.id}`, {
         method: "GET",
-      });
-      return res.json();
+      });      if (!res.ok) {
+        throw new Error(`Failed to fetch booking: ${res.status}`);
+      }      return res.json();
     }),
 
   selectByUserId: protectedProcedure
@@ -67,6 +71,9 @@ export const bookingsRouter = {
         `bookings?userId=${input.userId}`,
         { method: "GET" },
       );
+      if (!res.ok) {
+        throw new Error(`Failed to fetch bookings by user: ${res.status}`);
+      }
       return await res.json();
     }),
 
@@ -78,6 +85,9 @@ export const bookingsRouter = {
         `bookings?trainerId=${input.trainerId}`,
         { method: "GET" },
       );
+      if (!res.ok) {
+        throw new Error(`Failed to fetch bookings by trainer: ${res.status}`);
+      }
       return await res.json();
     }),
 

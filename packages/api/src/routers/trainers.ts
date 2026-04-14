@@ -47,6 +47,9 @@ export const trainersRouter = {
       const res = await fetchCustomResources(path, {
         method: "GET",
       });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch trainers: ${res.status}`);
+      }
       return await res.json();
     }),
 
@@ -57,6 +60,9 @@ export const trainersRouter = {
       const res = await fetchCustomResources(`trainers/${input.id}`, {
         method: "GET",
       });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch trainer: ${res.status}`);
+      }
       return res.json();
     }),
 
@@ -72,15 +78,13 @@ export const trainersRouter = {
 
           if (res.status === 200) {
             return await res.json();
-          } else if (res.status === 400) {
+          } else {
             const errorData = await res.json();
             const errorMessage =
               (hasErrors(errorData) && errorData.errors?.[0]?.message) ||
               (hasMessage(errorData) && errorData.message) ||
               "Could not create trainer profile.";
             throw new Error(errorMessage);
-          } else {
-            throw new Error("Trainer creation failed");
           }
         }),
       );

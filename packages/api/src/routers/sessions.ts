@@ -46,6 +46,9 @@ export const sessionsRouter = {
       const res = await fetchCustomResources(path, {
         method: "GET",
       });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch sessions: ${res.status}`);
+      }
       return await res.json();
     }),
 
@@ -56,6 +59,9 @@ export const sessionsRouter = {
       const res = await fetchCustomResources(`sessions/${input.id}`, {
         method: "GET",
       });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch session: ${res.status}`);
+      }
       return res.json();
     }),
 
