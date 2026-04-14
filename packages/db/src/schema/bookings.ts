@@ -20,17 +20,12 @@ export const insertBookingsSchema = z.object({
   notes: z.string().optional(),
 });
 
-export const updateBookingsSchema = selectBookingsSchema
-  .omit({
-    id: true,
-    userId: true,
-    sessionId: true,
-    trainerId: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-  .partial()
-  .required({ id: true });
+export const updateBookingsSchema = z.object({
+  id: z.string(),
+  bookingDate: z.string().optional(),
+  status: z.enum(["pending", "confirmed", "completed", "cancelled"]).optional(),
+  notes: z.string().nullable().optional(),
+});
 
 export const bookingsFormSchema = insertBookingsSchema.omit({
   userId: true,

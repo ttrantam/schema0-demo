@@ -30,16 +30,17 @@ export const insertTrainersSchema = z.object({
   yearsExperience: z.number().optional(),
 });
 
-export const updateTrainersSchema = selectTrainersSchema
-  .omit({
-    id: true,
-    userId: true,
-    email: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-  .partial()
-  .required({ id: true });
+export const updateTrainersSchema = z.object({
+  id: z.string(),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  profilePictureUrl: z.string().nullable().optional(),
+  bio: z.string().nullable().optional(),
+  specialization: z.string().nullable().optional(),
+  certifications: z.array(z.string()).nullable().optional(),
+  hourlyRate: z.number().nullable().optional(),
+  yearsExperience: z.number().nullable().optional(),
+});
 
 export const trainersFormSchema = insertTrainersSchema.omit({
   userId: true,

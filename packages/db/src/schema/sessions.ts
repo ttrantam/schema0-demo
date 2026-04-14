@@ -33,16 +33,20 @@ export const insertSessionsSchema = z.object({
   sessionType: z.enum(["one-on-one", "group"]).default("one-on-one"),
 });
 
-export const updateSessionsSchema = selectSessionsSchema
-  .omit({
-    id: true,
-    trainerId: true,
-    createdAt: true,
-    updatedAt: true,
-    currentParticipants: true,
-  })
-  .partial()
-  .required({ id: true });
+export const updateSessionsSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  description: z.string().nullable().optional(),
+  schedule: z.object({
+    dayOfWeek: z.string(),
+    startTime: z.string(),
+    endTime: z.string(),
+  }).optional(),
+  maxParticipants: z.number().nullable().optional(),
+  pricePerSession: z.number().nullable().optional(),
+  sessionType: z.enum(["one-on-one", "group"]).optional(),
+  status: z.enum(["active", "inactive", "full"]).optional(),
+});
 
 export const sessionsFormSchema = insertSessionsSchema.omit({
   trainerId: true,
