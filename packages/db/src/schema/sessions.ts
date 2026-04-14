@@ -1,4 +1,31 @@
 import { z } from "zod/v4";
+import { pgTable, text, varchar, integer, numeric, timestamp, uuid, json, index } from "drizzle-orm/pg-core";
+
+// Drizzle ORM table definition
+export const sessionsTable = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    trainerId: uuid("trainer_id").notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    description: text("description"),
+    schedule: json("schedule").$type<{
+      dayOfWeek: string;
+      startTime: string;
+      endTime: string;
+    }>().notNull(),
+    maxParticipants: integer("max_participants").default(1),
+    currentParticipants: integer("current_participants").default(0),
+    pricePerSession: numeric("price_per_session", { precision: 10, scale: 2 }),
+    sessionType: varchar("session_type", { length: 50 }).default("one-on-one"),
+    status: varchar("status", { length: 50 }).default("active"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    index("sessions_trainer_id_idx").on(t.trainerId),
+  ],
+);
 
 export const selectSessionsSchema = z.object({
   id: z.string(),

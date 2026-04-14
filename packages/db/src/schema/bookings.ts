@@ -1,4 +1,26 @@
 import { z } from "zod/v4";
+import { pgTable, text, varchar, timestamp, uuid, date, index } from "drizzle-orm/pg-core";
+
+// Drizzle ORM table definition
+export const bookingsTable = pgTable(
+  "bookings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull(),
+    sessionId: uuid("session_id").notNull(),
+    trainerId: uuid("trainer_id").notNull(),
+    bookingDate: date("booking_date").notNull(),
+    status: varchar("status", { length: 50 }).default("pending"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    index("bookings_user_id_idx").on(t.userId),
+    index("bookings_session_id_idx").on(t.sessionId),
+    index("bookings_trainer_id_idx").on(t.trainerId),
+  ],
+);
 
 export const selectBookingsSchema = z.object({
   id: z.string(),

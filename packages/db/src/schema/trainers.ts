@@ -1,4 +1,30 @@
 import { z } from "zod/v4";
+import { pgTable, text, varchar, integer, numeric, timestamp, uuid, index } from "drizzle-orm/pg-core";
+
+// Drizzle ORM table definition
+export const trainersTable = pgTable(
+  "trainers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull(),
+    firstName: varchar("first_name", { length: 255 }).notNull(),
+    lastName: varchar("last_name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull(),
+    profilePictureUrl: text("profile_picture_url"),
+    bio: text("bio"),
+    specialization: varchar("specialization", { length: 255 }),
+    certifications: text("certifications").array(),
+    rating: numeric("rating", { precision: 3, scale: 2 }).default(0),
+    hourlyRate: numeric("hourly_rate", { precision: 10, scale: 2 }),
+    yearsExperience: integer("years_experience").default(0),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (t) => [
+    index("trainers_user_id_idx").on(t.userId),
+    index("trainers_email_idx").on(t.email),
+  ],
+);
 
 export const selectTrainersSchema = z.object({
   id: z.string(),
